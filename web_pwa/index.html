@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CleanFacility Pro | Reporte de Supervisión de Limpieza de Edificios</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-icon">🏢</div>
+                <div class="brand-text">
+                    <h2>CleanFacility</h2>
+                    <span>SUPERVISIÓN PRO</span>
+                </div>
+            </div>
+
+            <nav class="nav-menu">
+                <button class="nav-item active" data-tab="nueva-supervision">
+                    <i data-lucide="clipboard-check"></i>
+                    <span>Nueva Auditoría</span>
+                </button>
+                <button class="nav-item" data-tab="historial">
+                    <i data-lucide="file-text"></i>
+                    <span>Historial de Informes</span>
+                </button>
+                <button class="nav-item" data-tab="estadisticas">
+                    <i data-lucide="bar-chart-3"></i>
+                    <span>KPIs & Desempeño</span>
+                </button>
+                <button class="nav-item" data-tab="guia-tecnica">
+                    <i data-lucide="book-open"></i>
+                    <span>Normas & Químicos</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="format-badge">
+                    <small>FORMATO OFICIAL</small>
+                    <strong>FOR-SGI-LMP-04</strong>
+                    <span>Rev. 2.4 (2026)</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header Top Bar -->
+            <header class="top-header">
+                <div class="header-left">
+                    <h1 id="page-title">Ficha de Supervisión de Limpieza</h1>
+                    <p id="page-subtitle">Auditoría técnica en campo, control de cuadrilla y evaluación por áreas</p>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" id="btn-demo-data">
+                        <i data-lucide="sparkles"></i> Llenar Datos Demo
+                    </button>
+                    <button class="btn btn-primary" id="btn-print-report">
+                        <i data-lucide="printer"></i> Imprimir / PDF
+                    </button>
+                </div>
+            </header>
+
+            <!-- Tab 1: Formulario de Supervisión -->
+            <section id="tab-nueva-supervision" class="tab-pane active">
+                <form id="inspection-form">
+                    <!-- 1. Datos Generales -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="header-icon bg-blue"><i data-lucide="building-2"></i></div>
+                            <div>
+                                <h3>1. Datos Generales del Edificio y Servicio</h3>
+                                <p>Identificación del inmueble, cliente y personal a cargo</p>
+                            </div>
+                        </div>
+                        <div class="card-body grid-3">
+                            <div class="form-group">
+                                <label for="edificio-nombre">Edificio / Torre Corporativa *</label>
+                                <input type="text" id="edificio-nombre" required placeholder="Ej: Torre Platino San Isidro" value="Centro Empresarial Platinum Tower">
+                            </div>
+                            <div class="form-group">
+                                <label for="edificio-direccion">Dirección / Distrito *</label>
+                                <input type="text" id="edificio-direccion" required placeholder="Ej: Av. Javier Prado Este 2450" value="Av. Víctor Andrés Belaúnde 147, San Isidro">
+                            </div>
+                            <div class="form-group">
+                                <label for="cliente-admin">Administrador / Contacto</label>
+                                <input type="text" id="cliente-admin" placeholder="Nombre del administrador" value="Ing. Roberto Seminario">
+                            </div>
+                            <div class="form-group">
+                                <label for="supervisor-nombre">Supervisor Responsable *</label>
+                                <input type="text" id="supervisor-nombre" required placeholder="Nombre del supervisor" value="Carlos Mendoza Ramos">
+                            </div>
+                            <div class="form-group">
+                                <label for="supervisor-dni">DNI / Carnet</label>
+                                <input type="text" id="supervisor-dni" placeholder="DNI del supervisor" value="43892156">
+                            </div>
+                            <div class="form-group">
+                                <label for="inspeccion-tipo">Tipo de Supervisión</label>
+                                <select id="inspeccion-tipo">
+                                    <option>Supervisión Rutinaria Diaria</option>
+                                    <option>Auditoría Mensual de Calidad</option>
+                                    <option>Supervisión Inopinada / Sorpresiva</option>
+                                    <option>Entrega de Turno</option>
+                                    <option>Recepción de Limpieza Post-Obra</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="inspeccion-fecha">Fecha de Inspección</label>
+                                <input type="date" id="inspeccion-fecha">
+                            </div>
+                            <div class="form-group">
+                                <label for="inspeccion-turno">Turno de Trabajo</label>
+                                <select id="inspeccion-turno">
+                                    <option>Turno Mañana (07:00 - 15:00)</option>
+                                    <option>Turno Tarde (15:00 - 23:00)</option>
+                                    <option>Turno Noche (23:00 - 07:00)</option>
+                                    <option>Jornada Completa</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="lider-cuadrilla">Líder de Cuadrilla / Operario Líder</label>
+                                <input type="text" id="lider-cuadrilla" placeholder="Nombre del líder" value="Juan Carlos Huapaya">
+                            </div>
+                        </div>
+
+                        <!-- Dotación de Personal -->
+                        <div class="crew-section">
+                            <h4><i data-lucide="users"></i> Control de Dotación de Personal</h4>
+                            <div class="grid-3 crew-metrics">
+                                <div class="form-group">
+                                    <label>Personal Programado:</label>
+                                    <input type="number" id="p-programado" min="1" value="6">
+                                </div>
+                                <div class="form-group">
+                                    <label>Personal Presente:</label>
+                                    <input type="number" id="p-presente" min="0" value="6">
+                                </div>
+                                <div class="crew-status" id="crew-status-badge">
+                                    <span class="status-pill status-success">Dotación Completa (100%)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2. Checklist Técnico por Zonas -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="header-icon bg-emerald"><i data-lucide="check-square"></i></div>
+                            <div>
+                                <h3>2. Checklist de Inspección por Áreas del Edificio</h3>
+                                <p>Califique cada punto técnico conforme al estándar de calidad ISSA CIMS</p>
+                            </div>
+                            <div class="quick-actions">
+                                <button type="button" class="btn btn-sm btn-outline" id="btn-check-all-c">Marcar Todo Conforme (C)</button>
+                            </div>
+                        </div>
+                        <div class="card-body" id="checklist-container">
+                            <!-- Inyectado dinámicamente con JavaScript -->
+                        </div>
+                    </div>
+
+                    <!-- 3. Control de EPP, Maquinaria e Insumos -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="header-icon bg-amber"><i data-lucide="shield-alert"></i></div>
+                            <div>
+                                <h3>3. Control SST, Equipos y Productos Químicos</h3>
+                                <p>Seguridad y Salud en el Trabajo conforme a Ley N° 29783</p>
+                            </div>
+                        </div>
+                        <div class="card-body grid-2">
+                            <div class="check-group">
+                                <h4>🦺 Elementos de Protección Personal (EPP)</h4>
+                                <label class="checkbox-item"><input type="checkbox" id="epp-uniforme" checked> Uniforme completo, limpio y fotocheck visible</label>
+                                <label class="checkbox-item"><input type="checkbox" id="epp-calzado" checked> Zapatos de seguridad con suela antideslizante</label>
+                                <label class="checkbox-item"><input type="checkbox" id="epp-guantes" checked> Guantes de nitrilo / jebe para desinfección</label>
+                                <label class="checkbox-item"><input type="checkbox" id="epp-lentes" checked> Lentes protectores para manipulación de químicos</label>
+                                <label class="checkbox-item"><input type="checkbox" id="epp-senaletica" checked> Uso visible de caballetes de "Piso Mojado"</label>
+                            </div>
+                            <div class="check-group">
+                                <h4>⚙️ Maquinarias y Químicos</h4>
+                                <label class="checkbox-item"><input type="checkbox" id="maq-operativa" checked> Maquinaria (lustradora/aspiradora) operativa y limpia</label>
+                                <label class="checkbox-item"><input type="checkbox" id="quim-rotulado" checked> Químicos correctamente rotulados con Hoja MSDS</label>
+                                <label class="checkbox-item"><input type="checkbox" id="office-orden" checked> Cuarto de limpieza (Office) ventilado y ordenado</label>
+                                <div class="form-group mt-3">
+                                    <label>Observaciones de Seguridad:</label>
+                                    <input type="text" id="obs-seguridad" placeholder="Condiciones inseguras o faltantes de EPP...">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 4. Resumen de Puntuación en Tiempo Real -->
+                    <div class="score-banner" id="score-banner">
+                        <div class="score-circle">
+                            <span class="score-number" id="live-score-val">100%</span>
+                            <small>CALIDAD</small>
+                        </div>
+                        <div class="score-details">
+                            <h3 id="live-score-level">ÓPTIMO</h3>
+                            <p id="live-score-desc">El servicio se encuentra en nivel óptimo de calidad y pulcritud.</p>
+                            <div class="score-chips">
+                                <span class="chip chip-c" id="chip-c">10 Conformes</span>
+                                <span class="chip chip-r" id="chip-r">0 Regulares</span>
+                                <span class="chip chip-nc" id="chip-nc">0 No Conformes</span>
+                                <span class="chip chip-na" id="chip-na">0 N/A</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 5. Conclusiones y Firmas -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="header-icon bg-indigo"><i data-lucide="pen-tool"></i></div>
+                            <div>
+                                <h3>4. Observaciones Finales y Acta de Conformidad</h3>
+                                <p>Cierre de auditoría y firmas de conformidad</p>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-group">
+                                <label for="obs-generales">Observaciones Generales y Recomendaciones:</label>
+                                <textarea id="obs-generales" rows="3" placeholder="Comentarios generales sobre la cuadrilla y estado del inmueble...">Supervisión ejecutada satisfactoriamente. Áreas comunes, baños y lobby en óptimo estado de aseo y desinfección.</textarea>
+                            </div>
+
+                            <div class="grid-2 signatures-grid">
+                                <div class="signature-box">
+                                    <h4>Firma del Supervisor de Servicio</h4>
+                                    <canvas id="canvas-sup" width="350" height="120"></canvas>
+                                    <button type="button" class="btn btn-sm btn-ghost" id="btn-clear-sup">Limpiar Firma</button>
+                                    <p class="sig-name" id="sig-sup-name">Carlos Mendoza Ramos</p>
+                                    <span class="sig-title">Supervisor de Calidad & Operaciones</span>
+                                </div>
+                                <div class="signature-box">
+                                    <h4>Firma / Recepción del Edificio</h4>
+                                    <canvas id="canvas-cli" width="350" height="120"></canvas>
+                                    <button type="button" class="btn btn-sm btn-ghost" id="btn-clear-cli">Limpiar Firma</button>
+                                    <input type="text" id="sig-cli-name" class="sig-input" placeholder="Nombre de quien recibe" value="Ing. Roberto Seminario">
+                                    <span class="sig-title">Administración / Representante</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-footer" style="display:flex; gap:12px; flex-wrap:wrap;">
+                            <button type="submit" class="btn btn-primary btn-lg" id="btn-guardar-supervision" style="flex:1;">
+                                <i data-lucide="save"></i> GUARDAR Y GENERAR INFORME TÉCNICO
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-lg" id="btn-exportar-json" style="flex:1; background:#0284C7; color:white;">
+                                <i data-lucide="download"></i> 📲 EXPORTAR PARA SISTEMA CENTRAL (JSON)
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Tab 2: Historial de Informes -->
+            <section id="tab-historial" class="tab-pane">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="header-icon bg-blue"><i data-lucide="history"></i></div>
+                        <div>
+                            <h3>Historial de Auditorías Realizadas</h3>
+                            <p>Registro local de reportes guardados</p>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="data-table" id="tabla-historial">
+                                <thead>
+                                    <tr>
+                                        <th>Código</th>
+                                        <th>Fecha</th>
+                                        <th>Edificio</th>
+                                        <th>Turno</th>
+                                        <th>Supervisor</th>
+                                        <th>Score</th>
+                                        <th>Calidad</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Inyectado por JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 3: Estadísticas -->
+            <section id="tab-estadisticas" class="tab-pane">
+                <div class="grid-4 stats-cards">
+                    <div class="stat-card">
+                        <span class="stat-label">Total Auditorías</span>
+                        <strong class="stat-val" id="st-total">12</strong>
+                        <small>Inspecciones totales</small>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Promedio de Calidad</span>
+                        <strong class="stat-val text-emerald" id="st-promedio">94.2%</strong>
+                        <small>Nivel A (Excelente)</small>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Cumplimiento Cuadrilla</span>
+                        <strong class="stat-val text-blue" id="st-dotacion">98.5%</strong>
+                        <small>Asistencia efectiva</small>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">No Conformidades</span>
+                        <strong class="stat-val text-amber" id="st-nc">3</strong>
+                        <small>Casos subsanados</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 4: Normas & Guía Técnica -->
+            <section id="tab-guia-tecnica" class="tab-pane">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="header-icon bg-emerald"><i data-lucide="book"></i></div>
+                        <div>
+                            <h3>Código de Colores y Guía de Dilución Química</h3>
+                            <p>Estándar internacional ISSA CIMS y prevención de contaminación cruzada</p>
+                        </div>
+                    </div>
+                    <div class="card-body grid-2">
+                        <div class="color-guide">
+                            <h4>🎨 Código de Colores para Microfibras y Mopas</h4>
+                            <div class="color-item color-red">
+                                <strong>🔴 ROJO:</strong> Inodoros, urinarios y zonas de alto riesgo en baños.
+                            </div>
+                            <div class="color-item color-yellow">
+                                <strong>🟡 AMARILLO:</strong> Lavatorios, griferías, azulejos y espejos de baños.
+                            </div>
+                            <div class="color-item color-blue">
+                                <strong>🔵 AZUL:</strong> Mobiliario de oficina, vidrios y pasadizos comunes.
+                            </div>
+                            <div class="color-item color-green">
+                                <strong>🟢 VERDE:</strong> Comedores, cafeterías y áreas de alimentos.
+                            </div>
+                        </div>
+                        <div class="chemical-guide">
+                            <h4>🧪 Dosificación de Productos Químicos</h4>
+                            <p><strong>Detergente Neutro:</strong> 10 ml por litro de agua para porcelanatos y mármoles.</p>
+                            <p><strong>Desinfectante Amonio Cuaternario:</strong> 8 ml por litro para perillas, botoneras y pisos.</p>
+                            <p><strong>Limpiavidrios Antiestático:</strong> Uso directo con paño microfibra azul o jalador.</p>
+                            <p><strong>Desincrustante Ácido:</strong> Aplicación focalizada en sarro con guantes de jebe.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Script de la aplicación -->
+    <script src="app.js"></script>
+</body>
+</html>

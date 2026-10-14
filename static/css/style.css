@@ -1,0 +1,264 @@
+/* Estilos Modernos y Corporativos para CLEANFACILITY PRO */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+:root {
+    --primary: #0284C7;
+    --primary-dark: #0369A1;
+    --primary-light: #E0F2FE;
+    --accent: #0D9488;
+    --success: #10B981;
+    --warning: #F59E0B;
+    --danger: #EF4444;
+    --dark-900: #0F172A;
+    --dark-800: #1E293B;
+    --dark-700: #334155;
+    --light-100: #F8FAFC;
+    --light-200: #F1F5F9;
+    --border-color: #E2E8F0;
+    --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    --hover-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+}
+
+/* Tipografía global */
+html, body, [class*="css"] {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Encabezado principal del sistema */
+.header-hero {
+    background: linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #0369A1 100%);
+    color: #FFFFFF;
+    padding: 24px 30px;
+    border-radius: 16px;
+    margin-bottom: 24px;
+    box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+    overflow: hidden;
+}
+
+.header-hero::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    right: -10%;
+    width: 300px;
+    height: 300px;
+    background: radial-gradient(circle, rgba(14, 165, 233, 0.25) 0%, rgba(255,255,255,0) 70%);
+    pointer-events: none;
+}
+
+.header-hero h1 {
+    font-size: 1.85rem;
+    font-weight: 800;
+    margin: 0 0 6px 0;
+    color: #FFFFFF !important;
+    letter-spacing: -0.5px;
+}
+
+.header-hero p {
+    font-size: 0.95rem;
+    color: #94A3B8;
+    margin: 0;
+}
+
+.header-badges {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.badge-tag {
+    background: rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(8px);
+    color: #E2E8F0;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Tarjetas de Métricas KPI */
+.kpi-card {
+    background: #FFFFFF;
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: var(--card-shadow);
+    transition: all 0.25s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--hover-shadow);
+    border-color: #CBD5E1;
+}
+
+.kpi-card .kpi-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #64748B;
+    margin-bottom: 6px;
+}
+
+.kpi-card .kpi-val {
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--dark-900);
+    line-height: 1.1;
+}
+
+.kpi-card .kpi-sub {
+    font-size: 0.8rem;
+    color: #94A3B8;
+    margin-top: 6px;
+}
+
+/* Estilos de Sección de Inspección */
+.area-box {
+    background: #FFFFFF;
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: var(--card-shadow);
+}
+
+.area-box-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+}
+
+.area-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--dark-900);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Pills de Calificación */
+.pill-c {
+    background-color: #D1FAE5;
+    color: #065F46;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
+.pill-r {
+    background-color: #FEF3C7;
+    color: #92400E;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
+.pill-nc {
+    background-color: #FEE2E2;
+    color: #991B1B;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
+.pill-na {
+    background-color: #F1F5F9;
+    color: #475569;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
+
+/* Tarjeta de Resumen de Score */
+.score-summary-banner {
+    border-radius: 16px;
+    padding: 24px;
+    color: #FFFFFF;
+    margin-bottom: 24px;
+    box-shadow: var(--card-shadow);
+}
+
+/* Tabs y Contenedores */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    background-color: #F1F5F9;
+    padding: 6px;
+    border-radius: 12px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px;
+    font-weight: 600;
+    padding: 8px 16px;
+    color: #475569;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: #FFFFFF !important;
+    color: #0284C7 !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+/* Historial de Informes - Agrupación por Entidad y Resúmenes */
+.entity-header-card {
+    background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+    border-radius: 14px;
+    padding: 16px 22px;
+    margin-top: 20px;
+    margin-bottom: 14px;
+    color: #FFFFFF;
+    border-left: 6px solid #0284C7;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+.entity-header-title {
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: #FFFFFF;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.entity-header-subtitle {
+    font-size: 0.85rem;
+    color: #94A3B8;
+    margin-top: 4px;
+}
+
+.summary-pill-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 8px 0 12px 0;
+}
+
+.summary-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.pill-c-badge { background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }
+.pill-r-badge { background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A; }
+.pill-nc-badge { background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; }
+.pill-na-badge { background-color: #F8FAFC; color: #475569; border: 1px solid #E2E8F0; }
+.pill-info-badge { background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE; }
