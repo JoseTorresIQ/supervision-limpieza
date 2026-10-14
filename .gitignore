@@ -1,0 +1,23 @@
+# Entornos virtuales y bytecode de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+ENV/
+
+# Archivos temporales de SQLite vacíos
+database.sqlite
+
+# Carpetas de editores
+.vscode/
+.idea/
+
+# Configuración local de Streamlit
+.streamlit/secrets.toml
+
+# Logs y SO
+*.log
+.DS_Store
+Thumbs.db
