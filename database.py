@@ -194,6 +194,7 @@ def init_db():
                 plazo_subsanacion TEXT NOT NULL,
                 responsable TEXT NOT NULL,
                 estado_subsanacion TEXT DEFAULT 'Pendiente',
+                foto_hallazgo_ruta TEXT,
                 FOREIGN KEY (supervision_id) REFERENCES supervisiones (id) ON DELETE CASCADE
             )
         """)
@@ -208,6 +209,7 @@ def init_db():
                 archivo_nombre TEXT NOT NULL,
                 archivo_ruta TEXT NOT NULL,
                 descripcion TEXT,
+                origen TEXT DEFAULT 'REGISTRO_FOTOGRAFICO',
                 FOREIGN KEY (supervision_id) REFERENCES supervisiones (id) ON DELETE CASCADE
             )
         """)
@@ -225,12 +227,19 @@ def init_db():
         except Exception:
             pass
 
+        # Migración segura: columna origen en supervision_fotos
+        try:
+            cursor.execute("ALTER TABLE supervision_fotos ADD COLUMN origen TEXT DEFAULT 'REGISTRO_FOTOGRAFICO'")
+        except Exception:
+            pass
+
         # Migración segura: columnas de subsanación de incidencias (CAPA)
         columnas_incidencias = [
             ("fecha_subsanacion", "TEXT"),
             ("foto_subsanacion_ruta", "TEXT"),
             ("comentario_cierre", "TEXT"),
-            ("cerrado_por", "TEXT")
+            ("cerrado_por", "TEXT"),
+            ("foto_hallazgo_ruta", "TEXT")
         ]
         for col_nom, col_tipo in columnas_incidencias:
             try:
@@ -963,11 +972,13 @@ def guardar_supervision_completa(datos_gral, detalles_evaluacion, incidencias, f
 
         # 3. Insertar Incidencias
         for inc in incidencias:
+            f_hallazgo = inc.get("foto_ruta") or (inc.get("fotos")[0] if inc.get("fotos") else inc.get("foto_hallazgo_ruta", ""))
             cursor.execute("""
                 INSERT INTO supervision_incidencias (
                     supervision_id, area_nombre, descripcion_hallazgo, severidad,
-                    accion_correctiva, plazo_subsanacion, responsable, estado_subsanacion
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    accion_correctiva, plazo_subsanacion, responsable, estado_subsanacion,
+                    foto_hallazgo_ruta
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 supervision_id,
                 inc.get("area_nombre", "General"),
@@ -976,7 +987,8 @@ def guardar_supervision_completa(datos_gral, detalles_evaluacion, incidencias, f
                 inc.get("accion_correctiva", ""),
                 inc.get("plazo_subsanacion", "24 horas"),
                 inc.get("responsable", "Supervisor de Turno"),
-                inc.get("estado_subsanacion", "Pendiente")
+                inc.get("estado_subsanacion", inc.get("estado_subsanacion", "Pendiente")),
+                f_hallazgo
             ))
 
         # 4. Insertar Fotos evitando duplicados
@@ -992,15 +1004,16 @@ def guardar_supervision_completa(datos_gral, detalles_evaluacion, incidencias, f
             nom_arch = f.get("archivo_nombre") or os.path.basename(ruta_norm)
             cursor.execute("""
                 INSERT INTO supervision_fotos (
-                    supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 supervision_id,
                 f.get("area_nombre", "General"),
                 f.get("tipo_evidencia", "Hallazgo / No Conforme"),
                 nom_arch,
                 ruta_norm,
-                f.get("descripcion", "")
+                f.get("descripcion", ""),
+                f.get("origen", "REGISTRO_FOTOGRAFICO")
             ))
 
         conn.commit()
@@ -1087,11 +1100,13 @@ def actualizar_supervision_completa(supervision_id: int, datos_gral: dict, detal
         # 3. Reemplazar Incidencias
         cursor.execute("DELETE FROM supervision_incidencias WHERE supervision_id = ?", (supervision_id,))
         for inc in incidencias:
+            f_hallazgo = inc.get("foto_ruta") or (inc.get("fotos")[0] if inc.get("fotos") else inc.get("foto_hallazgo_ruta", ""))
             cursor.execute("""
                 INSERT INTO supervision_incidencias (
                     supervision_id, area_nombre, descripcion_hallazgo, severidad,
-                    accion_correctiva, plazo_subsanacion, responsable, estado_subsanacion
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    accion_correctiva, plazo_subsanacion, responsable, estado_subsanacion,
+                    foto_hallazgo_ruta
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 supervision_id,
                 inc.get("area_nombre", "General"),
@@ -1100,7 +1115,8 @@ def actualizar_supervision_completa(supervision_id: int, datos_gral: dict, detal
                 inc.get("accion_correctiva", ""),
                 inc.get("plazo_subsanacion", "24 horas"),
                 inc.get("responsable", "Supervisor de Turno"),
-                inc.get("estado_subsanacion", inc.get("estado_subsanacion", "Pendiente"))
+                inc.get("estado_subsanacion", inc.get("estado_subsanacion", "Pendiente")),
+                f_hallazgo
             ))
 
         # 4. Actualizar fotos de la supervisión
@@ -1118,15 +1134,16 @@ def actualizar_supervision_completa(supervision_id: int, datos_gral: dict, detal
                 nom_arch = f.get("archivo_nombre") or os.path.basename(ruta_norm)
                 cursor.execute("""
                     INSERT INTO supervision_fotos (
-                        supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
                     supervision_id,
                     f.get("area_nombre", "General"),
                     f.get("tipo_evidencia", "Hallazgo / No Conforme"),
                     nom_arch,
                     ruta_norm,
-                    f.get("descripcion", "")
+                    f.get("descripcion", ""),
+                    f.get("origen", "REGISTRO_FOTOGRAFICO")
                 ))
 
         conn.commit()

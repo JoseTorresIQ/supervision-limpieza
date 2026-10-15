@@ -4,19 +4,23 @@ Buscador avanzado, visualización de reportes, descarga de PDF, exportación a E
 eliminación y EDICIÓN COMPLETA de reportes históricos.
 """
 import io
+import json
 import os
+import uuid
 import urllib.parse
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, time
 
-from config import PUNTAJES, clasificar_calidad
+from config import PUNTAJES, clasificar_calidad, FORMAT_CODE, FORMAT_VERSION, UPLOADS_DIR
 from database import (
     obtener_supervisiones, obtener_supervision_por_id,
     obtener_lista_edificios, obtener_lista_supervisores,
     obtener_tipos_inspeccion, obtener_turnos_trabajo,
-    actualizar_supervision_completa, eliminar_supervision
+    actualizar_supervision_completa, eliminar_supervision,
+    obtener_checklist_completo
 )
+from modules.nueva_supervision import guardar_y_optimizar_imagen
 from modules.reportes_pdf import generar_pdf_supervision
 
 
@@ -195,7 +199,7 @@ def render_historial_supervisiones():
             badge_color = calidad_info["color"]
             
             with st.container():
-                col_info, col_score, col_actions = st.columns([3.2, 1.5, 2.3])
+                col_info, col_score, col_actions = st.columns([2.9, 1.3, 2.8])
                 
                 with col_info:
                     p_falt = sup.get('personal_faltante', 0)
@@ -218,10 +222,13 @@ def render_historial_supervisiones():
                     """, unsafe_allow_html=True)
 
                 with col_actions:
-                    col_btn_pdf, col_btn_wsp, col_btn_edit, col_btn_del = st.columns([1, 1.2, 1, 1])
+                    col_btn_pdf, col_btn_json, col_btn_wsp, col_btn_edit, col_btn_del = st.columns([1, 1, 1.2, 1, 1])
                     
                     with col_btn_pdf:
                         if st.button("📄 PDF", key=f"btn_pdf_{sup_id}", use_container_width=True):
+                            st.session_state[f"prep_pdf_{sup_id}"] = True
+                        
+                        if st.session_state.get(f"prep_pdf_{sup_id}"):
                             data_completa = obtener_supervision_por_id(sup_id)
                             if data_completa:
                                 pdf_data = generar_pdf_supervision(data_completa)
@@ -234,6 +241,32 @@ def render_historial_supervisiones():
                                     use_container_width=True
                                 )
                     
+                    with col_btn_json:
+                        if st.button("📦 JSON", key=f"btn_json_{sup_id}", use_container_width=True):
+                            st.session_state[f"prep_json_{sup_id}"] = True
+
+                        if st.session_state.get(f"prep_json_{sup_id}"):
+                            data_completa_j = obtener_supervision_por_id(sup_id)
+                            if data_completa_j:
+                                export_payload = {
+                                    "codigo_formato": FORMAT_CODE,
+                                    "version": FORMAT_VERSION,
+                                    "fecha_exportacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "informe": data_completa_j["cabecera"],
+                                    "checklist_evaluacion": data_completa_j["detalles"],
+                                    "incidencias_capa": data_completa_j["incidencias"],
+                                    "registro_fotografico": data_completa_j["fotos"]
+                                }
+                                json_bytes = json.dumps(export_payload, indent=2, ensure_ascii=False, default=str).encode("utf-8")
+                                st.download_button(
+                                    label="📥 JSON",
+                                    data=json_bytes,
+                                    file_name=f"{sup['codigo_informe']}_Supervision_{sup['edificio_nombre'].replace(' ', '_')}.json",
+                                    mime="application/json",
+                                    key=f"down_json_{sup_id}",
+                                    use_container_width=True
+                                )
+
                     with col_btn_wsp:
                         msg_wsp = (
                             f"🏢 *INFORME DE SUPERVISIÓN DE LIMPIEZA*\n"
@@ -402,6 +435,99 @@ def render_historial_supervisiones():
                             with c_cli2:
                                 edit_cli_car = st.text_input("Cargo Receptor:", value=cab.get("firmante_cliente_cargo", "Administrador / Recepción"), key=f"e_cli_c_{sup_id}")
 
+                            st.markdown("---")
+                            st.markdown("#### 4. Editar Registro de Evidencias Fotográficas")
+                            fotos_existentes = det_edit.get("fotos", [])
+                            
+                            checklist_areas_all = obtener_checklist_completo(solo_activos=False)
+                            nombres_areas_cat = [a["nombre"] for a in checklist_areas_all] if checklist_areas_all else []
+                            for extra_a in ["General", "General / Cuadrilla", "Servicios Higiénicos", "Oficinas", "Recepción / Lobby"]:
+                                if extra_a not in nombres_areas_cat:
+                                    nombres_areas_cat.append(extra_a)
+                            
+                            tipos_evidencia_cat = [
+                                "Hallazgo / No Conforme",
+                                "Control de Calidad / Buen Estado",
+                                "Antes de Limpieza",
+                                "Después de Limpieza",
+                                "General de Calidad",
+                                "Seguridad / SST",
+                                "Condición Insegura"
+                            ]
+
+                            if fotos_existentes:
+                                st.markdown(f"**Fotografías registradas en este informe ({len(fotos_existentes)}):**")
+                                for f_idx, foto_item in enumerate(fotos_existentes):
+                                    f_ruta = foto_item.get("archivo_ruta", "")
+                                    f_origen = foto_item.get("origen", "REGISTRO_FOTOGRAFICO")
+                                    
+                                    curr_a = foto_item.get("area_nombre", "General")
+                                    if curr_a not in nombres_areas_cat:
+                                        nombres_areas_cat.append(curr_a)
+                                    idx_a = nombres_areas_cat.index(curr_a)
+
+                                    curr_t = foto_item.get("tipo_evidencia", "General de Calidad")
+                                    if curr_t not in tipos_evidencia_cat:
+                                        tipos_evidencia_cat.append(curr_t)
+                                    idx_t = tipos_evidencia_cat.index(curr_t)
+
+                                    with st.container():
+                                        col_f_img, col_f_meta, col_f_del = st.columns([1.2, 2.5, 0.7])
+                                        with col_f_img:
+                                            if f_ruta and os.path.exists(f_ruta):
+                                                st.image(f_ruta, use_container_width=True)
+                                            else:
+                                                st.caption("⚠️ Imagen no encontrada en disco")
+                                            
+                                            if f_origen == "CAPA":
+                                                st.markdown('<span style="background:#FEE2E2;color:#991B1B;font-weight:700;font-size:0.75rem;padding:3px 8px;border-radius:12px;border:1px solid #F87171;display:inline-block;">⚠️ Origen: Incidencia / CAPA</span>', unsafe_allow_html=True)
+                                            else:
+                                                st.markdown('<span style="background:#E0F2FE;color:#075985;font-weight:700;font-size:0.75rem;padding:3px 8px;border-radius:12px;border:1px solid #7DD3FC;display:inline-block;">📸 Origen: Evidencia de Calidad</span>', unsafe_allow_html=True)
+
+                                        with col_f_meta:
+                                            st.selectbox(
+                                                f"Área (Foto #{f_idx+1}):",
+                                                nombres_areas_cat,
+                                                index=idx_a,
+                                                key=f"e_fa_{sup_id}_{f_idx}"
+                                            )
+                                            st.selectbox(
+                                                f"Tipo Evidencia (Foto #{f_idx+1}):",
+                                                tipos_evidencia_cat,
+                                                index=idx_t,
+                                                key=f"e_ft_{sup_id}_{f_idx}"
+                                            )
+                                            st.text_input(
+                                                f"Descripción Técnica (Foto #{f_idx+1}):",
+                                                value=foto_item.get("descripcion", ""),
+                                                key=f"e_fd_{sup_id}_{f_idx}"
+                                            )
+
+                                        with col_f_del:
+                                            st.markdown("<br>", unsafe_allow_html=True)
+                                            st.checkbox(
+                                                "🗑️ Quitar foto",
+                                                key=f"e_f_del_{sup_id}_{f_idx}",
+                                                help="Marque esta casilla para eliminar esta fotografía del informe al guardar"
+                                            )
+                                        st.divider()
+                            else:
+                                st.info("ℹ️ Este informe actualmente no cuenta con fotografías registradas.")
+
+                            st.markdown("##### ➕ Incorporar Nuevas Fotografías de Evidencia")
+                            c_new_up, c_new_meta = st.columns([1.5, 1.5])
+                            with c_new_up:
+                                nuevas_fotos_subidas = st.file_uploader(
+                                    "Cargar nuevas fotos de evidencia (JPG, PNG, WEBP):",
+                                    type=["jpg", "jpeg", "png", "webp"],
+                                    accept_multiple_files=True,
+                                    key=f"e_new_fotos_up_{sup_id}"
+                                )
+                            with c_new_meta:
+                                new_def_area = st.selectbox("Área para las nuevas fotos:", nombres_areas_cat, key=f"e_new_area_{sup_id}")
+                                new_def_tipo = st.selectbox("Tipo de evidencia para las nuevas fotos:", tipos_evidencia_cat, key=f"e_new_tipo_{sup_id}")
+                                new_def_desc = st.text_input("Descripción técnica para las nuevas fotos:", placeholder="Ej: Verificación adicional de acabado...", key=f"e_new_desc_{sup_id}")
+
                             c_save, c_cancel = st.columns([2, 1])
                             with c_save:
                                 if st.form_submit_button("💾 GUARDAR CAMBIOS EN EL INFORME", type="primary", use_container_width=True):
@@ -453,11 +579,51 @@ def render_historial_supervisiones():
                                         "firmante_cliente_cargo": edit_cli_car
                                     }
 
+                                    # Procesar fotos actualizadas
+                                    fotos_actualizadas = []
+                                    # 1. Fotos existentes no eliminadas
+                                    for f_idx, foto_item in enumerate(fotos_existentes):
+                                        del_val = st.session_state.get(f"e_f_del_{sup_id}_{f_idx}", False)
+                                        if not del_val:
+                                            a_val = st.session_state.get(f"e_fa_{sup_id}_{f_idx}", foto_item.get("area_nombre", "General"))
+                                            t_val = st.session_state.get(f"e_ft_{sup_id}_{f_idx}", foto_item.get("tipo_evidencia", "General de Calidad"))
+                                            d_val = st.session_state.get(f"e_fd_{sup_id}_{f_idx}", foto_item.get("descripcion", ""))
+                                            fotos_actualizadas.append({
+                                                "supervision_id": sup_id,
+                                                "area_nombre": a_val,
+                                                "tipo_evidencia": t_val,
+                                                "archivo_nombre": foto_item.get("archivo_nombre", ""),
+                                                "archivo_ruta": foto_item.get("archivo_ruta", ""),
+                                                "descripcion": d_val,
+                                                "origen": foto_item.get("origen", "REGISTRO_FOTOGRAFICO")
+                                            })
+
+                                    # 2. Nuevas fotos subidas
+                                    if nuevas_fotos_subidas:
+                                        for nfile in nuevas_fotos_subidas:
+                                            ncontent = nfile.getvalue()
+                                            if ncontent:
+                                                ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                                rand_suffix = uuid.uuid4().hex[:6]
+                                                nombre_arch = f"evidencia_edit_{ts_str}_{rand_suffix}.jpg"
+                                                ruta_arch = str(UPLOADS_DIR / nombre_arch)
+                                                guardar_y_optimizar_imagen(ncontent, ruta_arch)
+                                                fotos_actualizadas.append({
+                                                    "supervision_id": sup_id,
+                                                    "area_nombre": new_def_area,
+                                                    "tipo_evidencia": new_def_tipo,
+                                                    "archivo_nombre": nombre_arch,
+                                                    "archivo_ruta": ruta_arch,
+                                                    "descripcion": new_def_desc,
+                                                    "origen": "REGISTRO_FOTOGRAFICO"
+                                                })
+
                                     actualizar_supervision_completa(
                                         supervision_id=sup_id,
                                         datos_gral=datos_actualizados,
                                         detalles_evaluacion=nuevos_detalles,
-                                        incidencias=incs
+                                        incidencias=incs,
+                                        fotos_guardadas=fotos_actualizadas
                                     )
 
                                     st.success(f"🎉 Informe {cab['codigo_informe']} actualizado con éxito. Nuevo Score: {nuevo_score:.1f}% ({nueva_calidad['nivel']})")
@@ -511,7 +677,8 @@ def render_historial_supervisiones():
                             for f_idx, foto in enumerate(det_info["fotos"]):
                                 if os.path.exists(foto["archivo_ruta"]):
                                     with f_cols[f_idx % len(f_cols)]:
-                                        st.image(foto["archivo_ruta"], caption=f"{foto['tipo_evidencia']}: {foto['descripcion']}")
+                                        tag_orig = "[INCIDENCIA/CAPA]" if foto.get("origen") == "CAPA" else "[CALIDAD]"
+                                        st.image(foto["archivo_ruta"], caption=f"{tag_orig} {foto.get('area_nombre', '')} - {foto['tipo_evidencia']}: {foto['descripcion']}")
 
                 st.divider()
         st.markdown("<br>", unsafe_allow_html=True)

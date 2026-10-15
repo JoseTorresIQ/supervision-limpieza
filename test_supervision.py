@@ -2,6 +2,7 @@
 Script de Pruebas Automatizadas: Sistema de Supervisión de Limpieza de Edificios.
 Valida la inicialización de SQLite, cálculo de calificaciones, inserción transaccional y generación de PDF/Excel.
 """
+import io
 import os
 import sys
 import unittest
@@ -651,6 +652,435 @@ class TestSupervisionLimpieza(unittest.TestCase):
         self.assertTrue(callable(render_user_sidebar))
 
         print("[OK] Autenticación con contraseña según usuarios y gestión de roles validados con éxito.")
+
+    def test_15_incidencia_foto_integracion_en_evidencias(self):
+        """Verificar que al subir foto en Registro de Incidencias se incorpora a Registro Fotográfico con Área y Descripción del Hallazgo."""
+        import io
+        from database import guardar_supervision_completa, obtener_supervision_por_id, eliminar_supervision
+        from modules.reportes_pdf import generar_pdf_supervision
+        from config import UPLOADS_DIR
+        from PIL import Image as PILImage
+        from pypdf import PdfReader
+
+        # 1. Crear una imagen de prueba física
+        test_img_path = str(UPLOADS_DIR / "test_incidencia_evidencia.jpg")
+        img = PILImage.new('RGB', (400, 300), color=(220, 80, 50))
+        img.save(test_img_path)
+
+        area_inc = "Ascensores y Escaleras"
+        desc_hallazgo = "Mancha persistente de óxido en riel de ascensor N° 2"
+
+        # 2. Datos de supervisión con incidencia y foto integrada
+        datos_gral = {
+            "codigo_informe": generar_nuevo_codigo(),
+            "fecha_inspeccion": "2026-10-14",
+            "hora_inicio": "09:00",
+            "hora_fin": "10:30",
+            "tipo_inspeccion": "Inspección Rutinaria",
+            "turno": "Mañana",
+            "edificio_id": 1,
+            "edificio_nombre": "Torre Test",
+            "edificio_direccion": "Av. Test 123",
+            "administrador_nombre": "Admin Test",
+            "supervisor_id": 1,
+            "supervisor_nombre": "Supervisor Test",
+            "supervisor_dni": "12345678",
+            "lider_cuadrilla": "Líder Test",
+            "personal_programado": 4,
+            "personal_presente": 4,
+            "personal_faltante": 0,
+            "score_global": 90.0,
+            "nivel_calidad": "Satisfactorio",
+            "estado_aprobacion": "Aprobado",
+            "total_items_evaluados": 1,
+            "total_conformes": 1,
+            "total_regulares": 0,
+            "total_no_conformes": 0,
+            "total_no_aplica": 0,
+            "epp_conforme": 1,
+            "maquinaria_conforme": 1,
+            "insumos_conforme": 1,
+            "incluir_firmas": 1,
+            "observaciones_generales": "Supervisión de prueba con foto en incidencia.",
+            "plan_accion_resumen": "1 incidencia registrada",
+            "estado_informe": "FINALIZADO"
+        }
+        detalles = [
+            {"id_area": "A1", "nombre_area": area_inc, "id_criterio": "C1", "item_criterio": "Rieles", "calificacion": "NC", "puntos": 0, "observacion": desc_hallazgo}
+        ]
+        incidencias = [
+            {
+                "area_nombre": area_inc,
+                "descripcion_hallazgo": desc_hallazgo,
+                "severidad": "Alta",
+                "accion_correctiva": "Lijar y aplicar anticorrosivo",
+                "plazo_subsanacion": "24 Horas",
+                "responsable": "Líder de Cuadrilla",
+                "estado_subsanacion": "Pendiente",
+                "foto_ruta": test_img_path,
+                "fotos": [test_img_path]
+            }
+        ]
+        # La foto se coloca en el Registro Fotográfico con Área con Incidencia y Descripción del Hallazgo
+        fotos = [
+            {
+                "uid": "f_test_inc_001",
+                "area_nombre": area_inc,
+                "tipo_evidencia": "Hallazgo / No Conforme",
+                "archivo_nombre": "test_incidencia_evidencia.jpg",
+                "archivo_ruta": test_img_path,
+                "descripcion": desc_hallazgo
+            }
+        ]
+
+        # 3. Guardar en BD
+        sup_id, cod = guardar_supervision_completa(datos_gral, detalles, incidencias, fotos)
+        self.assertIsNotNone(sup_id)
+
+        # 4. Recuperar y verificar datos en BD
+        recuperado = obtener_supervision_por_id(sup_id)
+        self.assertEqual(len(recuperado["incidencias"]), 1)
+        self.assertEqual(recuperado["incidencias"][0]["area_nombre"], area_inc)
+        self.assertEqual(recuperado["incidencias"][0]["descripcion_hallazgo"], desc_hallazgo)
+        self.assertEqual(recuperado["incidencias"][0]["foto_hallazgo_ruta"], test_img_path)
+
+        self.assertEqual(len(recuperado["fotos"]), 1)
+        foto_recup = recuperado["fotos"][0]
+        self.assertEqual(foto_recup["area_nombre"], area_inc, "El área de la foto debe ser el Área con Incidencia.")
+        self.assertEqual(foto_recup["descripcion"], desc_hallazgo, "La descripción de la foto debe ser la Descripción del Hallazgo.")
+        self.assertEqual(foto_recup["tipo_evidencia"], "Hallazgo / No Conforme")
+
+        # 5. Generar PDF y validar que contiene el registro fotográfico con estos datos
+        pdf_bytes = generar_pdf_supervision(recuperado)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        texto_completo = "".join([page.extract_text() for page in reader.pages])
+        self.assertIn("REGISTRO FOTOGRÁFICO", texto_completo)
+        self.assertIn(area_inc, texto_completo)
+        self.assertIn(desc_hallazgo, texto_completo)
+
+        # Limpiar
+        eliminar_supervision(sup_id)
+        if os.path.exists(test_img_path):
+            os.remove(test_img_path)
+
+        print("[OK] Integración de foto de incidencia al Registro Fotográfico de Evidencias validada con éxito.")
+
+    def test_18_distincion_fotos_capa_vs_calidad_en_pdf(self):
+        """Verificar la distinción clara en el PDF entre fotos de Incidencias (CAPA) y fotos de Control de Calidad."""
+        import json
+        from PIL import Image as PILImage
+        from pypdf import PdfReader
+        from database import eliminar_supervision, actualizar_supervision_completa
+
+        # Crear dos imágenes de prueba
+        img_capa = os.path.join(DATA_DIR, "test_capa_dist.jpg")
+        img_calidad = os.path.join(DATA_DIR, "test_calidad_dist.jpg")
+        im1 = PILImage.new("RGB", (200, 200), color=(220, 50, 50))
+        im1.save(img_capa, "JPEG")
+        im2 = PILImage.new("RGB", (200, 200), color=(50, 150, 220))
+        im2.save(img_calidad, "JPEG")
+
+        codigo = generar_nuevo_codigo()
+        edif = obtener_lista_edificios()[0]
+        sup = obtener_lista_supervisores()[0]
+
+        datos_gral = {
+            "codigo_informe": codigo,
+            "fecha_inspeccion": "2026-10-15",
+            "hora_inicio": "08:00",
+            "hora_fin": "09:30",
+            "tipo_inspeccion": "Supervisión Rutinaria Diaria",
+            "turno": "Mañana",
+            "edificio_id": edif["id"],
+            "edificio_nombre": edif["nombre"],
+            "edificio_direccion": edif.get("direccion", "Av. Principal 123"),
+            "administrador_nombre": "Admin Edificio",
+            "supervisor_id": sup["id"],
+            "supervisor_nombre": sup["nombre_completo"],
+            "supervisor_dni": sup.get("dni", "12345678"),
+            "lider_cuadrilla": "Juan Pérez",
+            "personal_programado": 4,
+            "personal_presente": 4,
+            "personal_faltante": 0,
+            "score_global": 92.0,
+            "nivel_calidad": "ADECUADO",
+            "estado_aprobacion": "Aprobado con Observaciones",
+            "total_items_evaluados": 1,
+            "total_conformes": 1,
+            "total_regulares": 0,
+            "total_no_conformes": 0,
+            "total_no_aplica": 0,
+            "epp_conforme": 1,
+            "maquinaria_conforme": 1,
+            "insumos_conforme": 1,
+            "incluir_firmas": 1,
+            "observaciones_generales": "Prueba de distincion de fotos CAPA vs Calidad.",
+            "plan_accion_resumen": "1 CAPA",
+            "estado_informe": "FINALIZADO"
+        }
+        detalles = [
+            {"id_area": "A1", "nombre_area": "Baños", "id_criterio": "C1", "item_criterio": "Pisos", "calificacion": "C", "puntos": 100, "observacion": "OK"}
+        ]
+        incidencias = [
+            {
+                "area_nombre": "Baños Piso 2",
+                "descripcion_hallazgo": "Fuga menor en grifería del lavatorio",
+                "severidad": "Media",
+                "accion_correctiva": "Ajuste de llave y sellado",
+                "plazo_subsanacion": "24 Horas",
+                "responsable": "Líder de Cuadrilla",
+                "estado_subsanacion": "Pendiente",
+                "foto_hallazgo_ruta": img_capa
+            }
+        ]
+        fotos = [
+            {
+                "area_nombre": "Baños Piso 2",
+                "tipo_evidencia": "Hallazgo / No Conforme",
+                "archivo_nombre": "test_capa_dist.jpg",
+                "archivo_ruta": img_capa,
+                "descripcion": "Fuga menor en grifería del lavatorio",
+                "origen": "CAPA"
+            },
+            {
+                "area_nombre": "Lobby y Recepción",
+                "tipo_evidencia": "Control de Calidad / Buen Estado",
+                "archivo_nombre": "test_calidad_dist.jpg",
+                "archivo_ruta": img_calidad,
+                "descripcion": "Piso abrillantado conforme estándar ISSA",
+                "origen": "REGISTRO_FOTOGRAFICO"
+            }
+        ]
+
+        sup_id, cod = guardar_supervision_completa(datos_gral, detalles, incidencias, fotos)
+        recup = obtener_supervision_por_id(sup_id)
+
+        # Generar PDF
+        pdf_bytes = generar_pdf_supervision(recup)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        texto_pdf = "".join([p.extract_text() for p in reader.pages])
+
+        # Validar subsecciones diferenciadas en el PDF
+        self.assertIn("6.1 Evidencias Fotográficas de Incidencias / No Conformidades (CAPA)", texto_pdf)
+        self.assertIn("6.2 Registro Fotográfico de Control de Calidad e Inspección General", texto_pdf)
+        self.assertIn("[INCIDENCIA / CAPA]", texto_pdf)
+        self.assertIn("[CONTROL DE CALIDAD]", texto_pdf)
+        self.assertIn("Fuga menor en grifería del lavatorio", texto_pdf)
+        self.assertIn("Piso abrillantado conforme estándar ISSA", texto_pdf)
+
+        # Limpiar
+        eliminar_supervision(sup_id)
+        for p in (img_capa, img_calidad):
+            if os.path.exists(p):
+                os.remove(p)
+        print("[OK] Distinción de fotos CAPA vs Calidad en PDF validada al 100%.")
+
+    def test_19_descarga_json_informes_historial(self):
+        """Verificar la generación y estructura del archivo JSON para descarga desde el historial."""
+        import json
+        from config import FORMAT_CODE, FORMAT_VERSION
+        from database import eliminar_supervision
+
+        codigo = generar_nuevo_codigo()
+        edif = obtener_lista_edificios()[0]
+        sup = obtener_lista_supervisores()[0]
+
+        datos_gral = {
+            "codigo_informe": codigo,
+            "fecha_inspeccion": "2026-10-15",
+            "hora_inicio": "08:00",
+            "hora_fin": "09:30",
+            "tipo_inspeccion": "Supervisión Rutinaria Diaria",
+            "turno": "Mañana",
+            "edificio_id": edif["id"],
+            "edificio_nombre": edif["nombre"],
+            "edificio_direccion": edif.get("direccion", "Av. Principal 123"),
+            "administrador_nombre": "Admin Edificio",
+            "supervisor_id": sup["id"],
+            "supervisor_nombre": sup["nombre_completo"],
+            "supervisor_dni": sup.get("dni", "12345678"),
+            "lider_cuadrilla": "Juan Pérez",
+            "personal_programado": 4,
+            "personal_presente": 4,
+            "personal_faltante": 0,
+            "score_global": 100.0,
+            "nivel_calidad": "ÓPTIMO",
+            "estado_aprobacion": "Aprobado",
+            "total_items_evaluados": 1,
+            "total_conformes": 1,
+            "total_regulares": 0,
+            "total_no_conformes": 0,
+            "total_no_aplica": 0,
+            "epp_conforme": 1,
+            "maquinaria_conforme": 1,
+            "insumos_conforme": 1,
+            "incluir_firmas": 1,
+            "observaciones_generales": "Prueba de exportacion JSON historial.",
+            "plan_accion_resumen": "",
+            "estado_informe": "FINALIZADO"
+        }
+        detalles = [
+            {"id_area": "A1", "nombre_area": "Recepción", "id_criterio": "C1", "item_criterio": "Mostrador", "calificacion": "C", "puntos": 100, "observacion": "Limpio"}
+        ]
+        sup_id, cod = guardar_supervision_completa(datos_gral, detalles, [], [])
+        data_completa = obtener_supervision_por_id(sup_id)
+
+        # Construir payload de exportación como en historial.py
+        export_payload = {
+            "codigo_formato": FORMAT_CODE,
+            "version": FORMAT_VERSION,
+            "fecha_exportacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "informe": data_completa["cabecera"],
+            "checklist_evaluacion": data_completa["detalles"],
+            "incidencias_capa": data_completa["incidencias"],
+            "registro_fotografico": data_completa["fotos"]
+        }
+        json_str = json.dumps(export_payload, indent=2, ensure_ascii=False, default=str)
+        self.assertTrue(len(json_str) > 50)
+
+        # Decodificar y validar estructura
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed["codigo_formato"], FORMAT_CODE)
+        self.assertEqual(parsed["version"], FORMAT_VERSION)
+        self.assertEqual(parsed["informe"]["codigo_informe"], codigo)
+        self.assertEqual(len(parsed["checklist_evaluacion"]), 1)
+        self.assertEqual(parsed["checklist_evaluacion"][0]["item_criterio"], "Mostrador")
+
+        eliminar_supervision(sup_id)
+        print("[OK] Generación y estructura de archivo JSON desde Historial validada con éxito.")
+
+    def test_20_editar_registro_fotografico_historial(self):
+        """Verificar la edición completa del registro fotográfico (modificar, eliminar y agregar fotos) en Historial."""
+        from PIL import Image as PILImage
+        from database import eliminar_supervision, actualizar_supervision_completa
+
+        img1 = os.path.join(DATA_DIR, "test_edit_f1.jpg")
+        img2 = os.path.join(DATA_DIR, "test_edit_f2.jpg")
+        img3 = os.path.join(DATA_DIR, "test_edit_f3.jpg")
+        for p, col in [(img1, (10, 10, 10)), (img2, (20, 20, 20)), (img3, (30, 30, 30))]:
+            im = PILImage.new("RGB", (100, 100), color=col)
+            im.save(p, "JPEG")
+
+        codigo = generar_nuevo_codigo()
+        edif = obtener_lista_edificios()[0]
+        sup = obtener_lista_supervisores()[0]
+
+        datos_gral = {
+            "codigo_informe": codigo,
+            "fecha_inspeccion": "2026-10-15",
+            "hora_inicio": "08:00",
+            "hora_fin": "09:30",
+            "tipo_inspeccion": "Supervisión Rutinaria Diaria",
+            "turno": "Mañana",
+            "edificio_id": edif["id"],
+            "edificio_nombre": edif["nombre"],
+            "edificio_direccion": edif.get("direccion", "Av. Principal 123"),
+            "administrador_nombre": "Admin Edificio",
+            "supervisor_id": sup["id"],
+            "supervisor_nombre": sup["nombre_completo"],
+            "supervisor_dni": sup.get("dni", "12345678"),
+            "lider_cuadrilla": "Juan Pérez",
+            "personal_programado": 4,
+            "personal_presente": 4,
+            "personal_faltante": 0,
+            "score_global": 100.0,
+            "nivel_calidad": "ÓPTIMO",
+            "estado_aprobacion": "Aprobado",
+            "total_items_evaluados": 1,
+            "total_conformes": 1,
+            "total_regulares": 0,
+            "total_no_conformes": 0,
+            "total_no_aplica": 0,
+            "epp_conforme": 1,
+            "maquinaria_conforme": 1,
+            "insumos_conforme": 1,
+            "incluir_firmas": 1,
+            "observaciones_generales": "Antes de editar fotos.",
+            "plan_accion_resumen": "",
+            "estado_informe": "FINALIZADO"
+        }
+        detalles = [
+            {"id_area": "A1", "nombre_area": "General", "id_criterio": "C1", "item_criterio": "Limpieza", "calificacion": "C", "puntos": 100, "observacion": "OK"}
+        ]
+        fotos_iniciales = [
+            {
+                "area_nombre": "Pasadizo Piso 1",
+                "tipo_evidencia": "Antes de Limpieza",
+                "archivo_nombre": "test_edit_f1.jpg",
+                "archivo_ruta": img1,
+                "descripcion": "Foto inicial 1",
+                "origen": "REGISTRO_FOTOGRAFICO"
+            },
+            {
+                "area_nombre": "Pasadizo Piso 2",
+                "tipo_evidencia": "Antes de Limpieza",
+                "archivo_nombre": "test_edit_f2.jpg",
+                "archivo_ruta": img2,
+                "descripcion": "Foto inicial 2 a eliminar",
+                "origen": "REGISTRO_FOTOGRAFICO"
+            }
+        ]
+
+        sup_id, cod = guardar_supervision_completa(datos_gral, detalles, [], fotos_iniciales)
+        recup1 = obtener_supervision_por_id(sup_id)
+        self.assertEqual(len(recup1["fotos"]), 2)
+
+        # Simular edición en historial:
+        # - Foto 1 se edita (cambia área, tipo y descripción)
+        # - Foto 2 se descarta / elimina
+        # - Foto 3 se agrega como nueva
+        fotos_editadas = [
+            {
+                "supervision_id": sup_id,
+                "area_nombre": "Pasadizo Piso 1 - Modificado",
+                "tipo_evidencia": "Después de Limpieza",
+                "archivo_nombre": "test_edit_f1.jpg",
+                "archivo_ruta": img1,
+                "descripcion": "Foto 1 editada exitosamente",
+                "origen": "REGISTRO_FOTOGRAFICO"
+            },
+            {
+                "supervision_id": sup_id,
+                "area_nombre": "Lobby Principal",
+                "tipo_evidencia": "General de Calidad",
+                "archivo_nombre": "test_edit_f3.jpg",
+                "archivo_ruta": img3,
+                "descripcion": "Nueva foto agregada durante edición",
+                "origen": "REGISTRO_FOTOGRAFICO"
+            }
+        ]
+
+        actualizar_supervision_completa(
+            supervision_id=sup_id,
+            datos_gral=datos_gral,
+            detalles_evaluacion=detalles,
+            incidencias=[],
+            fotos_guardadas=fotos_editadas
+        )
+
+        recup2 = obtener_supervision_por_id(sup_id)
+        self.assertEqual(len(recup2["fotos"]), 2)
+
+        # Verificar que Foto 1 tiene los datos editados
+        f1 = [f for f in recup2["fotos"] if "test_edit_f1.jpg" in f["archivo_nombre"]][0]
+        self.assertEqual(f1["area_nombre"], "Pasadizo Piso 1 - Modificado")
+        self.assertEqual(f1["tipo_evidencia"], "Después de Limpieza")
+        self.assertEqual(f1["descripcion"], "Foto 1 editada exitosamente")
+
+        # Verificar que Foto 2 ya no existe
+        f2_exists = any("test_edit_f2.jpg" in f["archivo_nombre"] for f in recup2["fotos"])
+        self.assertFalse(f2_exists, "La foto 2 debió ser eliminada del informe.")
+
+        # Verificar que Foto 3 fue añadida
+        f3 = [f for f in recup2["fotos"] if "test_edit_f3.jpg" in f["archivo_nombre"]][0]
+        self.assertEqual(f3["area_nombre"], "Lobby Principal")
+        self.assertEqual(f3["descripcion"], "Nueva foto agregada durante edición")
+
+        eliminar_supervision(sup_id)
+        for p in (img1, img2, img3):
+            if os.path.exists(p):
+                os.remove(p)
+        print("[OK] Edición del registro fotográfico en Historial validada al 100%.")
 
 
 if __name__ == "__main__":

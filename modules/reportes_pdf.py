@@ -120,6 +120,16 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
         textColor=colors.HexColor("#0284C7"),
         spaceAfter=4
     )
+    sub_heading = ParagraphStyle(
+        'SubSectionHeading',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#0F172A"),
+        spaceBefore=6,
+        spaceAfter=3
+    )
     body_style = ParagraphStyle(
         'BodyDark',
         parent=styles['Normal'],
@@ -450,49 +460,80 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
             Spacer(1, 8)
         ]))
 
-    # 8. REGISTRO FOTOGRÁFICO DE EVIDENCIAS (CONSERVANDO RELACIÓN DE ASPECTO ORIGINAL)
+    # 8. REGISTRO FOTOGRÁFICO DE EVIDENCIAS Y CONTROL DE CALIDAD (DISTINCIÓN CAPA VS REGISTRO GENERAL)
     if fotos:
         story.append(PageBreak())
         story.append(Paragraph("6. REGISTRO FOTOGRÁFICO DE EVIDENCIAS Y CONTROL DE CALIDAD", section_heading))
-        story.append(Spacer(1, 4))
+        story.append(Paragraph("Registro visual de auditoría con distinción entre evidencias de no conformidades (CAPA) y control de calidad general.", body_style))
+        story.append(Spacer(1, 6))
+
+        # Rutas de fotos de incidencias para identificación segura
+        rutas_incidencias = set()
+        for inc in incidencias:
+            r_inc = inc.get("foto_hallazgo_ruta") or inc.get("foto_ruta")
+            if r_inc:
+                rutas_incidencias.add(os.path.normpath(r_inc))
+            for f_sub in inc.get("fotos", []):
+                if f_sub:
+                    rutas_incidencias.add(os.path.normpath(f_sub))
+
+        fotos_capa = []
+        fotos_calidad = []
+        for f in fotos:
+            ruta_norm = os.path.normpath(f.get("archivo_ruta", ""))
+            origen_f = str(f.get("origen", "")).upper()
+            tipo_f = str(f.get("tipo_evidencia", "")).upper()
+            if origen_f == "CAPA" or ruta_norm in rutas_incidencias or "CAPA" in tipo_f or "INCIDENCIA" in origen_f:
+                fotos_capa.append(f)
+            else:
+                fotos_calidad.append(f)
 
         max_foto_w = 3.4 * inch
         max_foto_h = 2.3 * inch
 
-        foto_cells = []
-        for f in fotos:
-            ruta_foto = f.get("archivo_ruta", "")
-            if os.path.exists(ruta_foto):
-                try:
-                    # Calcular dimensiones proporcionales para evitar distorsión
-                    with PILImage.open(ruta_foto) as p_img:
-                        orig_w, orig_h = p_img.size
-                        scale = min(max_foto_w / orig_w, max_foto_h / orig_h)
-                        final_w = orig_w * scale
-                        final_h = orig_h * scale
+        def _generar_tabla_fotos(lista_f, es_capa=False):
+            cells = []
+            for f in lista_f:
+                ruta_foto = f.get("archivo_ruta", "")
+                if os.path.exists(ruta_foto):
+                    try:
+                        with PILImage.open(ruta_foto) as p_img:
+                            orig_w, orig_h = p_img.size
+                            scale = min(max_foto_w / orig_w, max_foto_h / orig_h)
+                            final_w = orig_w * scale
+                            final_h = orig_h * scale
 
-                    img_flowable = Image(ruta_foto, width=final_w, height=final_h)
-                    caption_text = f"<b>{f.get('tipo_evidencia', 'Evidencia')}:</b> {f.get('area_nombre', '')} - <font color='#475569'>{f.get('descripcion', '')}</font>"
-                    cell_content = [
-                        img_flowable,
-                        Spacer(1, 2),
-                        Paragraph(caption_text, body_style)
-                    ]
-                    foto_cells.append(cell_content)
-                except Exception:
-                    pass
+                        img_flowable = Image(ruta_foto, width=final_w, height=final_h)
+                        area_f = f.get("area_nombre", "General")
+                        desc_f = f.get("descripcion", "")
+                        tipo_f = f.get("tipo_evidencia", "Evidencia")
 
-        # Organizar en cuadrícula de 2 columnas
-        foto_table_data = []
-        for i in range(0, len(foto_cells), 2):
-            row = [foto_cells[i]]
-            if i + 1 < len(foto_cells):
-                row.append(foto_cells[i+1])
-            else:
-                row.append("")
-            foto_table_data.append(row)
+                        if es_capa:
+                            caption_text = f"<b><font color='#DC2626'>[INCIDENCIA / CAPA]</font> {area_f}:</b> <font color='#1E293B'>{desc_f}</font>"
+                        else:
+                            caption_text = f"<b><font color='#0284C7'>[CONTROL DE CALIDAD]</font> {tipo_f} — {area_f}:</b> <font color='#475569'>{desc_f}</font>"
 
-        if foto_table_data:
+                        cell_content = [
+                            img_flowable,
+                            Spacer(1, 2),
+                            Paragraph(caption_text, body_style)
+                        ]
+                        cells.append(cell_content)
+                    except Exception:
+                        pass
+
+            if not cells:
+                return None
+
+            foto_table_data = []
+            for i in range(0, len(cells), 2):
+                row = [cells[i]]
+                if i + 1 < len(cells):
+                    row.append(cells[i+1])
+                else:
+                    row.append("")
+                foto_table_data.append(row)
+
             foto_table = Table(foto_table_data, colWidths=[3.7*inch, 3.7*inch])
             foto_table.setStyle(TableStyle([
                 ('VALIGN', (0,0), (-1,-1), 'TOP'),
@@ -500,8 +541,32 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
                 ('RIGHTPADDING', (0,0), (-1,-1), 4),
                 ('BOTTOMPADDING', (0,0), (-1,-1), 8),
             ]))
-            story.append(foto_table)
-            story.append(Spacer(1, 8))
+            return foto_table
+
+        # 6.1 Incidencias / CAPA
+        if fotos_capa:
+            story.append(KeepTogether([
+                Paragraph("6.1 Evidencias Fotográficas de Incidencias / No Conformidades (CAPA)", sub_heading),
+                Paragraph("Fotografías vinculadas al Registro de Incidencias que sustentan hallazgos para acción correctiva:", body_style),
+                Spacer(1, 4)
+            ]))
+            t_capa = _generar_tabla_fotos(fotos_capa, es_capa=True)
+            if t_capa:
+                story.append(t_capa)
+                story.append(Spacer(1, 6))
+
+        # 6.2 Control de Calidad
+        if fotos_calidad:
+            num_cc = "6.2" if fotos_capa else "6.1"
+            story.append(KeepTogether([
+                Paragraph(f"{num_cc} Registro Fotográfico de Control de Calidad e Inspección General", sub_heading),
+                Paragraph("Fotografías de supervisión rutinaria (Antes / Después / Panorámica General) registradas en campo:", body_style),
+                Spacer(1, 4)
+            ]))
+            t_calidad = _generar_tabla_fotos(fotos_calidad, es_capa=False)
+            if t_calidad:
+                story.append(t_calidad)
+                story.append(Spacer(1, 6))
 
     # 8. SECCIÓN 6: ACTA DE CONFORMIDAD Y FIRMAS (CONDICIONADA POR OPCIÓN DE HABILITACIÓN)
     incluir_firmas = cabecera.get("incluir_firmas", 1)

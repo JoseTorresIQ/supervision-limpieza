@@ -130,12 +130,14 @@ def render_modulo_capa():
                         st.info(f"💬 **Comentario de Cierre:** {inc['comentario_cierre']}")
 
             with c_info2:
-                # Mostrar evidencia de subsanación si existe
+                foto_hallazgo = inc.get("foto_hallazgo_ruta")
                 foto_despues = inc.get("foto_subsanacion_ruta")
+                if foto_hallazgo and os.path.exists(foto_hallazgo):
+                    st.image(foto_hallazgo, caption="📸 Hallazgo Inicial (Antes)", use_container_width=True)
                 if foto_despues and os.path.exists(foto_despues):
-                    st.image(foto_despues, caption="📸 Evidencia 'Después' (Subsanado)", use_container_width=True)
-                else:
-                    st.caption("📸 Sin foto de subsanación adjunta.")
+                    st.image(foto_despues, caption="📸 Evidencia de Subsanación (Después)", use_container_width=True)
+                elif not foto_hallazgo:
+                    st.caption("📸 Sin fotografías adjuntas.")
 
             # Formulario para actualizar o levantar observación
             st.markdown("---")

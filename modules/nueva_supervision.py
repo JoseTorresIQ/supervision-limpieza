@@ -142,7 +142,8 @@ def render_formulario_nueva_supervision():
                                             "tipo_evidencia": tipo_val,
                                             "archivo_nombre": nom_arch,
                                             "archivo_ruta": ruta_norm,
-                                            "descripcion": desc_val
+                                            "descripcion": desc_val,
+                                            "origen": f.get("origen", "REGISTRO_FOTOGRAFICO")
                                         })
                                         st.session_state[f"f_area_{uid}"] = area_val
                                         st.session_state[f"f_tipo_{uid}"] = tipo_val
@@ -246,6 +247,9 @@ def render_formulario_nueva_supervision():
 
     if "fotos_temp" not in st.session_state:
         st.session_state.fotos_temp = []
+
+    if "inc_uploader_ver" not in st.session_state:
+        st.session_state.inc_uploader_ver = 0
 
     # Inicializar llaves de cabecera en session_state si no existen
     if "sel_edificio" not in st.session_state and edificios:
@@ -472,7 +476,14 @@ def render_formulario_nueva_supervision():
     # -------------------------------------------------------------
     with tab4:
         st.markdown("### ⚠️ Registro de Incidencias / No Conformidades (CAPA)")
-        st.caption("Registre las observaciones que ameritan un plan de acción correctivo inmediato con plazo.")
+        st.caption("Registre las observaciones que ameritan un plan de acción correctivo inmediato con plazo y evidencia fotográfica.")
+
+        if "inc_uploader_ver" not in st.session_state:
+            st.session_state.inc_uploader_ver = 0
+        if "fotos_temp" not in st.session_state:
+            st.session_state.fotos_temp = []
+        if "fotos_cargadas_ids" not in st.session_state:
+            st.session_state.fotos_cargadas_ids = set()
 
         with st.form("form_incidencia", clear_on_submit=True):
             col_i_area, col_i_sev = st.columns([2, 1])
@@ -491,21 +502,91 @@ def render_formulario_nueva_supervision():
             with col_i_resp:
                 resp_inc = st.text_input("Responsable:", value="Líder de Cuadrilla", key="inc_resp")
 
-            if st.form_submit_button("➕ Agregar Incidencia a la Lista"):
+            st.markdown("#### 📸 Registro Fotográfico del Hallazgo (Evidencia)")
+            st.caption("Cargue fotografías del hallazgo. Se incorporarán automáticamente al **Registro Fotográfico de Evidencias** con el **Área con Incidencia** y la **Descripción del Hallazgo**.")
+
+            col_fi1, col_fi2 = st.columns([1.5, 1.2])
+            with col_fi1:
+                fotos_inc_archivos = st.file_uploader(
+                    "Cargar Fotografía(s) del Hallazgo:",
+                    type=["png", "jpg", "jpeg"],
+                    accept_multiple_files=True,
+                    key=f"inc_fotos_up_{st.session_state.get('inc_uploader_ver', 0)}",
+                    help="Cargue una o más fotos del hallazgo. Se colocarán en el Registro Fotográfico con el Área y Descripción de esta incidencia."
+                )
+            with col_fi2:
+                foto_inc_cam = st.camera_input(
+                    "O Tomar Foto con Cámara:",
+                    key=f"inc_foto_cam_{st.session_state.get('inc_uploader_ver', 0)}"
+                )
+
+            if st.form_submit_button("➕ Agregar Incidencia a la Lista", type="primary", use_container_width=True):
                 if desc_inc.strip():
+                    # Recoger archivos fotográficos subidos en el formulario
+                    archivos_fotos_inc = []
+                    if fotos_inc_archivos:
+                        if isinstance(fotos_inc_archivos, list):
+                            archivos_fotos_inc.extend(fotos_inc_archivos)
+                        else:
+                            archivos_fotos_inc.append(fotos_inc_archivos)
+                    if foto_inc_cam:
+                        archivos_fotos_inc.append(foto_inc_cam)
+
+                    fotos_agregadas_inc = []
+                    for file in archivos_fotos_inc:
+                        content = file.getvalue()
+                        if not content:
+                            continue
+                        f_hash = hashlib.md5(content).hexdigest()
+                        if f_hash in st.session_state.fotos_cargadas_ids:
+                            continue
+
+                        ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        rand_suffix = uuid.uuid4().hex[:6]
+                        nombre_archivo = f"evidencia_incidencia_{ts_str}_{rand_suffix}.jpg"
+                        ruta_archivo = str(UPLOADS_DIR / nombre_archivo)
+                        guardar_y_optimizar_imagen(content, ruta_archivo)
+
+                        uid = f"f_{ts_str}_{rand_suffix}"
+
+                        # Integrar en Registro Fotográfico de Evidencias con Área y Descripción del Hallazgo
+                        st.session_state.fotos_temp.append({
+                            "uid": uid,
+                            "area_nombre": area_inc,
+                            "tipo_evidencia": "Hallazgo / No Conforme",
+                            "archivo_nombre": nombre_archivo,
+                            "archivo_ruta": ruta_archivo,
+                            "descripcion": desc_inc.strip(),
+                            "origen": "CAPA"
+                        })
+                        st.session_state[f"f_area_{uid}"] = area_inc
+                        st.session_state[f"f_tipo_{uid}"] = "Hallazgo / No Conforme"
+                        st.session_state[f"f_desc_{uid}"] = desc_inc.strip()
+                        st.session_state.fotos_cargadas_ids.add(f_hash)
+                        st.session_state.fotos_cargadas_ids.add(ruta_archivo)
+                        st.session_state.fotos_cargadas_ids.add(nombre_archivo)
+                        fotos_agregadas_inc.append(ruta_archivo)
+
                     st.session_state.incidencias_temp.append({
                         "area_nombre": area_inc,
-                        "descripcion_hallazgo": desc_inc,
+                        "descripcion_hallazgo": desc_inc.strip(),
                         "severidad": sev_inc,
-                        "accion_correctiva": act_inc,
+                        "accion_correctiva": act_inc.strip(),
                         "plazo_subsanacion": plz_inc,
-                        "responsable": resp_inc,
-                        "estado_subsanacion": "Pendiente"
+                        "responsable": resp_inc.strip(),
+                        "estado_subsanacion": "Pendiente",
+                        "foto_ruta": fotos_agregadas_inc[0] if fotos_agregadas_inc else "",
+                        "fotos": fotos_agregadas_inc
                     })
-                    st.success("Incidencia agregada correctamente.")
+                    st.session_state["inc_uploader_ver"] = st.session_state.get("inc_uploader_ver", 0) + 1
+
+                    if fotos_agregadas_inc:
+                        st.success(f"✅ Incidencia registrada y {len(fotos_agregadas_inc)} fotografía(s) integrada(s) en el **Registro Fotográfico de Evidencias** (Área: {area_inc}).")
+                    else:
+                        st.success("✅ Incidencia agregada correctamente a la lista.")
                     st.rerun()
                 else:
-                    st.error("Ingrese una descripción para el hallazgo.")
+                    st.error("Ingrese una descripción para el hallazgo / no conformidad.")
 
         # Tabla de Incidencias registradas
         if st.session_state.incidencias_temp:
@@ -515,14 +596,42 @@ def render_formulario_nueva_supervision():
                 with c1:
                     st.markdown(f"**{inc['area_nombre']}**")
                     st.caption(f"Severidad: {inc['severidad']} | Plazo: {inc['plazo_subsanacion']}")
+                    if inc.get("fotos"):
+                        st.caption(f"📸 {len(inc['fotos'])} evidencia(s) fotográfica(s) vinculada(s)")
                 with c2:
                     st.markdown(f"**Hallazgo:** {inc['descripcion_hallazgo']}")
                     st.caption(f"Acción: {inc['accion_correctiva']} (Resp: {inc['responsable']})")
+                    if inc.get("fotos"):
+                        c_tcols = st.columns(min(len(inc["fotos"]), 3))
+                        for t_i, r_f in enumerate(inc["fotos"][:3]):
+                            if os.path.exists(r_f):
+                                with c_tcols[t_i]:
+                                    st.image(r_f, width=90)
                 with c3:
                     st.warning(f"Estado: {inc['estado_subsanacion']}")
                 with c4:
-                    if st.button("🗑️", key=f"del_inc_{idx}"):
-                        st.session_state.incidencias_temp.pop(idx)
+                    if st.button("🗑️", key=f"del_inc_{idx}", help="Eliminar incidencia y sus fotos asociadas"):
+                        inc_del = st.session_state.incidencias_temp.pop(idx)
+                        fotos_a_borrar = set(inc_del.get("fotos", []))
+                        if fotos_a_borrar:
+                            nuevas_fotos = []
+                            for f in st.session_state.fotos_temp:
+                                if f.get("archivo_ruta") in fotos_a_borrar:
+                                    u = f.get("uid")
+                                    if u:
+                                        st.session_state.pop(f"f_area_{u}", None)
+                                        st.session_state.pop(f"f_tipo_{u}", None)
+                                        st.session_state.pop(f"f_desc_{u}", None)
+                                    st.session_state.fotos_cargadas_ids.discard(f.get("archivo_ruta"))
+                                    st.session_state.fotos_cargadas_ids.discard(f.get("archivo_nombre"))
+                                    if os.path.exists(f.get("archivo_ruta", "")):
+                                        try:
+                                            os.remove(f["archivo_ruta"])
+                                        except Exception:
+                                            pass
+                                else:
+                                    nuevas_fotos.append(f)
+                            st.session_state.fotos_temp = nuevas_fotos
                         st.rerun()
         else:
             st.info("No se han registrado incidencias críticas en esta supervisión.")
@@ -540,7 +649,7 @@ def render_formulario_nueva_supervision():
 
         col_met1, col_met2 = st.columns([2, 1.5])
         with col_met1:
-            metodo_foto = st.radio("Método de captura de evidencia:", ["📁 Cargar desde Archivos / Galería", "📸 Tomar Foto Directa con Cámara"], horizontal=True, key="rad_metodo_foto")
+            metodo_foto = st.radio("Método de captura de evidencia adicional:", ["📁 Cargar desde Archivos / Galería", "📸 Tomar Foto Directa con Cámara"], horizontal=True, key="rad_metodo_foto")
 
         uploader_ver = st.session_state.uploader_key_version
         archivos_subidos = []
@@ -581,7 +690,8 @@ def render_formulario_nueva_supervision():
                     "tipo_evidencia": "Hallazgo / No Conforme",
                     "archivo_nombre": nombre_archivo,
                     "archivo_ruta": ruta_archivo,
-                    "descripcion": ""
+                    "descripcion": "",
+                    "origen": "REGISTRO_FOTOGRAFICO"
                 })
                 st.session_state[f"f_area_{uid}"] = area_defecto
                 st.session_state[f"f_tipo_{uid}"] = "Hallazgo / No Conforme"
@@ -600,7 +710,10 @@ def render_formulario_nueva_supervision():
         if st.session_state.fotos_temp:
             st.markdown(f"#### 🖼️ Evidencias Fotográficas del Informe ({len(st.session_state.fotos_temp)} cargada(s)):")
             indices_a_eliminar = []
-            nombres_areas = [a["nombre"] for a in checklist_areas] if checklist_areas else ["General"]
+            nombres_areas = [a["nombre"] for a in checklist_areas] if checklist_areas else []
+            for extra_a in ["General / Cuadrilla", "General"]:
+                if extra_a not in nombres_areas:
+                    nombres_areas.append(extra_a)
             tipos_evidencia = ["Hallazgo / No Conforme", "Antes de Limpieza", "Después de Limpieza", "General de Calidad"]
 
             for idx, foto in enumerate(st.session_state.fotos_temp):
@@ -617,8 +730,16 @@ def render_formulario_nueva_supervision():
                         else:
                             st.warning("⚠️ Archivo no encontrado")
                     with col_meta:
+                        orig_f = foto.get("origen", "REGISTRO_FOTOGRAFICO")
+                        if orig_f == "CAPA":
+                            st.markdown("<span style='background:#FEE2E2; color:#B91C1C; padding:2px 8px; border-radius:6px; font-weight:700; font-size:0.78rem;'>⚠️ Origen: Incidencia / No Conformidad (CAPA)</span>", unsafe_allow_html=True)
+                        else:
+                            st.markdown("<span style='background:#E0F2FE; color:#0369A1; padding:2px 8px; border-radius:6px; font-weight:700; font-size:0.78rem;'>📸 Origen: Registro Fotográfico de Calidad</span>", unsafe_allow_html=True)
+
                         curr_area = foto.get("area_nombre", nombres_areas[0])
-                        idx_area = nombres_areas.index(curr_area) if curr_area in nombres_areas else 0
+                        if curr_area not in nombres_areas:
+                            nombres_areas.append(curr_area)
+                        idx_area = nombres_areas.index(curr_area)
                         sel_a = st.selectbox(f"Área (Foto #{idx+1}):", nombres_areas, index=idx_area, key=f"f_area_{uid}")
                         foto["area_nombre"] = sel_a
 
@@ -902,7 +1023,8 @@ def render_formulario_nueva_supervision():
                         "tipo_evidencia": f_tipo,
                         "archivo_nombre": nom_arch,
                         "archivo_ruta": ruta_norm,
-                        "descripcion": f_desc
+                        "descripcion": f_desc,
+                        "origen": f.get("origen", "REGISTRO_FOTOGRAFICO")
                     })
 
                 # Preparar datos generales
@@ -1005,7 +1127,8 @@ def render_formulario_nueva_supervision():
                     st.session_state.fotos_temp = []
                     st.session_state.pop("fotos_cargadas_ids", None)
                     st.session_state["uploader_key_version"] = st.session_state.get("uploader_key_version", 0) + 1
-                    keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith("rad_") or k.startswith("obs_") or k.startswith("sel_") or k.startswith("p_") or k.startswith("f_")]
+                    st.session_state["inc_uploader_ver"] = st.session_state.get("inc_uploader_ver", 0) + 1
+                    keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith("rad_") or k.startswith("obs_") or k.startswith("sel_") or k.startswith("p_") or k.startswith("f_") or (k.startswith("inc_") and k != "inc_uploader_ver")]
                     for k in keys_to_del:
                         st.session_state.pop(k, None)
 
