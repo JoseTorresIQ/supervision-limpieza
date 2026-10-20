@@ -9,7 +9,7 @@ import base64
 import uuid
 import hashlib
 from datetime import datetime, date, time
-from PIL import Image
+from PIL import Image, ImageOps
 import streamlit as st
 import pandas as pd
 
@@ -22,26 +22,419 @@ from database import (
     guardar_supervision_completa, generar_nuevo_codigo,
     obtener_ultima_supervision_edificio, obtener_borradores_supervisiones,
     obtener_supervision_por_id, eliminar_supervision,
-    actualizar_supervision_completa
+    actualizar_supervision_completa, agregar_edificio, agregar_supervisor
 )
 from modules.reportes_pdf import generar_pdf_supervision
 
 
-def guardar_y_optimizar_imagen(imagen_bytes: bytes, ruta_destino: str, max_ancho: int = 1400, calidad: int = 85):
-    """Redimensiona y comprime una imagen fotográfica para optimizar espacio y velocidad de PDF."""
+def guardar_y_optimizar_imagen(imagen_bytes, ruta_destino: str, max_dimension: int = 1400, calidad: int = 85):
+    """
+    Redimensiona y comprime una imagen fotográfica respetando su orientación física original (EXIF transpose).
+    Si la foto fue tomada verticalmente (ej: celular en modo retrato con orientación EXIF 6 u 8),
+    se transpone físicamente y se guarda en vertical.
+    Si la foto es horizontal, se preserva horizontal.
+    """
     try:
+        # Soporte para Data URLs (base64) procedentes de PWA o cámaras
+        if isinstance(imagen_bytes, str):
+            if "," in imagen_bytes:
+                imagen_bytes = base64.b64decode(imagen_bytes.split(",", 1)[1])
+            else:
+                imagen_bytes = base64.b64decode(imagen_bytes)
+        elif hasattr(imagen_bytes, "getvalue"):
+            imagen_bytes = imagen_bytes.getvalue()
+        elif hasattr(imagen_bytes, "read"):
+            imagen_bytes = imagen_bytes.read()
+
         img = Image.open(io.BytesIO(imagen_bytes))
+
+        # 1. Aplicar orientación según metadatos EXIF de la cámara móvil
+        img = ImageOps.exif_transpose(img)
+
+        # 2. Convertir a RGB si es necesario (manejar transparencias o paletas)
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        # 3. Redimensionar proporcionalmente respetando la orientación (vertical u horizontal)
         w, h = img.size
-        if w > max_ancho:
-            nuevo_h = int(h * (max_ancho / w))
-            img = img.resize((max_ancho, nuevo_h), Image.Resampling.LANCZOS)
+        if max(w, h) > max_dimension:
+            scale = max_dimension / max(w, h)
+            nuevo_w = max(1, int(w * scale))
+            nuevo_h = max(1, int(h * scale))
+            img = img.resize((nuevo_w, nuevo_h), Image.Resampling.LANCZOS)
+
         img.save(ruta_destino, "JPEG", optimize=True, quality=calidad)
     except Exception:
         with open(ruta_destino, "wb") as f_out:
-            f_out.write(imagen_bytes)
+            if isinstance(imagen_bytes, str):
+                if "," in imagen_bytes:
+                    f_out.write(base64.b64decode(imagen_bytes.split(",", 1)[1]))
+                else:
+                    f_out.write(base64.b64decode(imagen_bytes))
+            elif hasattr(imagen_bytes, "getvalue"):
+                f_out.write(imagen_bytes.getvalue())
+            elif isinstance(imagen_bytes, bytes):
+                f_out.write(imagen_bytes)
 
+
+def rotar_imagen_guardada(ruta_imagen: str, grados: int = 90) -> bool:
+    """Rota una imagen existente en disco 90 grados en sentido horario."""
+    if not os.path.exists(ruta_imagen):
+        return False
+    try:
+        with Image.open(ruta_imagen) as img:
+            img = ImageOps.exif_transpose(img)
+            # grados 90 en sentido horario = ROTATE_270 en PIL
+            if grados == 90:
+                img_rot = img.transpose(Image.Transpose.ROTATE_270)
+            elif grados == 180:
+                img_rot = img.transpose(Image.Transpose.ROTATE_180)
+            elif grados == 270:
+                img_rot = img.transpose(Image.Transpose.ROTATE_90)
+            else:
+                img_rot = img.rotate(-grados, expand=True)
+            if img_rot.mode in ("RGBA", "P"):
+                img_rot = img_rot.convert("RGB")
+            img_rot.save(ruta_imagen, "JPEG", optimize=True, quality=85)
+        return True
+    except Exception as e:
+        print(f"Error rotando imagen {ruta_imagen}: {e}")
+        return False
+
+
+
+def normalizar_texto_criterio(texto: str) -> str:
+    """Normaliza texto para comparación flexible de nombres de criterios (sin acentos ni puntuación)."""
+    if not texto:
+        return ""
+    import unicodedata
+    import re
+    t = unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode("utf-8")
+    return re.sub(r"[^a-zA-Z0-9]", "", t).lower()
+
+
+def procesar_importacion_json(pwa_data: dict, checklist_areas: list, edificios: list, supervisores: list, tipos_inspeccion: list, turnos_trabajo: list) -> dict:
+    """
+    Procesa un archivo JSON (exportado desde PWA offline o descargado desde Historial)
+    e inyecta todos sus datos de cabecera, criterios, incidencias y fotos
+    en st.session_state para poblar de inmediato el formulario de supervisión.
+    """
+    cab = pwa_data.get("informe") if isinstance(pwa_data.get("informe"), dict) else pwa_data
+
+    # A. Edificio
+    edif_nom = (cab.get("edificio_nombre") or pwa_data.get("edificio_nombre") or "").strip()
+    if edif_nom:
+        nombres_edif = [e["nombre"] for e in edificios]
+        if edif_nom in nombres_edif:
+            st.session_state["sel_edificio"] = edif_nom
+        else:
+            match = next((e_n for e_n in nombres_edif if edif_nom.lower() in e_n.lower() or e_n.lower() in edif_nom.lower()), None)
+            if match:
+                st.session_state["sel_edificio"] = match
+            else:
+                try:
+                    dir_edif = cab.get("edificio_direccion") or pwa_data.get("edificio_direccion") or "Lima, Perú"
+                    admin_edif = cab.get("administrador_contacto") or pwa_data.get("administrador_contacto") or "Administración"
+                    agregar_edificio(edif_nom, dir_edif, "Lima", admin_edif, "", 10, 2, 6, "Importado desde PWA/JSON")
+                    edificios.clear()
+                    edificios.extend(obtener_lista_edificios(solo_activos=True))
+                    st.session_state["sel_edificio"] = edif_nom
+                except Exception:
+                    if nombres_edif:
+                        st.session_state["sel_edificio"] = nombres_edif[0]
+
+    # B. Supervisor
+    sup_nom = (cab.get("supervisor_nombre") or pwa_data.get("supervisor_nombre") or "").strip()
+    if sup_nom:
+        nombres_sup = [s["nombre_completo"] for s in supervisores]
+        if sup_nom in nombres_sup:
+            st.session_state["sel_supervisor"] = sup_nom
+        else:
+            match_s = next((s_n for s_n in nombres_sup if sup_nom.lower() in s_n.lower() or s_n.lower() in sup_nom.lower()), None)
+            if match_s:
+                st.session_state["sel_supervisor"] = match_s
+            else:
+                try:
+                    dni_s = cab.get("supervisor_dni") or pwa_data.get("supervisor_dni") or ""
+                    agregar_supervisor(sup_nom, dni_s, "Supervisor de Operaciones", "")
+                    supervisores.clear()
+                    supervisores.extend(obtener_lista_supervisores(solo_activos=True))
+                    st.session_state["sel_supervisor"] = sup_nom
+                except Exception:
+                    if nombres_sup:
+                        st.session_state["sel_supervisor"] = nombres_sup[0]
+
+    # C. Tipo de Inspección
+    tipo_nom = (cab.get("tipo_inspeccion") or pwa_data.get("tipo_inspeccion") or "").strip()
+    if tipo_nom:
+        if tipo_nom in tipos_inspeccion:
+            st.session_state["sel_tipo_insp"] = tipo_nom
+        else:
+            match_t = next((t for t in tipos_inspeccion if tipo_nom.lower() in t.lower() or t.lower() in tipo_nom.lower()), None)
+            if match_t:
+                st.session_state["sel_tipo_insp"] = match_t
+
+    # D. Turno de Trabajo
+    turno_nom = (cab.get("turno") or pwa_data.get("turno") or "").strip()
+    if turno_nom:
+        if turno_nom in turnos_trabajo:
+            st.session_state["sel_turno"] = turno_nom
+        else:
+            match_tr = next((tr for tr in turnos_trabajo if turno_nom.lower() in tr.lower() or tr.lower() in turno_nom.lower() or turno_nom.split()[0].lower() in tr.lower()), None)
+            if match_tr:
+                st.session_state["sel_turno"] = match_tr
+
+    # E. Fecha de Inspección
+    f_raw = cab.get("fecha_inspeccion") or pwa_data.get("fecha_inspeccion")
+    if f_raw:
+        if isinstance(f_raw, date):
+            st.session_state["sel_fecha"] = f_raw
+        elif isinstance(f_raw, str):
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+                try:
+                    st.session_state["sel_fecha"] = datetime.strptime(f_raw.strip()[:10], fmt).date()
+                    break
+                except Exception:
+                    pass
+
+    # F. Horas
+    h_ini = cab.get("hora_inicio") or pwa_data.get("hora_inicio")
+    if h_ini:
+        if isinstance(h_ini, time):
+            st.session_state["sel_hini"] = h_ini
+        elif isinstance(h_ini, str):
+            for fmt in ("%H:%M", "%H:%M:%S"):
+                try:
+                    st.session_state["sel_hini"] = datetime.strptime(h_ini.strip(), fmt).time()
+                    break
+                except Exception:
+                    pass
+
+    h_fin = cab.get("hora_fin") or pwa_data.get("hora_fin")
+    if h_fin:
+        if isinstance(h_fin, time):
+            st.session_state["sel_hfin"] = h_fin
+        elif isinstance(h_fin, str):
+            for fmt in ("%H:%M", "%H:%M:%S"):
+                try:
+                    st.session_state["sel_hfin"] = datetime.strptime(h_fin.strip(), fmt).time()
+                    break
+                except Exception:
+                    pass
+
+    # G. Líder de Cuadrilla
+    lider = cab.get("lider_cuadrilla") or pwa_data.get("lider_cuadrilla")
+    if lider:
+        st.session_state["sel_lider"] = str(lider).strip()
+
+    # H. Personal Programado / Presente
+    p_prog = cab.get("personal_programado") if "personal_programado" in cab else pwa_data.get("personal_programado")
+    if p_prog is not None:
+        try:
+            st.session_state["p_prog"] = max(1, int(p_prog))
+        except Exception:
+            pass
+
+    p_pres = cab.get("personal_presente") if "personal_presente" in cab else pwa_data.get("personal_presente")
+    if p_pres is not None:
+        try:
+            st.session_state["p_pres"] = max(0, int(p_pres))
+        except Exception:
+            pass
+
+    # I. Observaciones Generales
+    obs_gral = cab.get("observaciones_generales") or pwa_data.get("observaciones_generales")
+    if obs_gral is not None:
+        st.session_state["txt_obs_gral"] = str(obs_gral).strip()
+
+    # J. SST / Equipos
+    if "observaciones_sst" in cab or "observaciones_sst" in pwa_data:
+        st.session_state["txt_sst"] = str(cab.get("observaciones_sst") or pwa_data.get("observaciones_sst", "")).strip()
+
+    # 2. Checklist / Criterios Técnicos
+    crit_map = {crit["id"]: crit for area in checklist_areas for crit in area["criterios"]}
+    crit_norm_map = {normalizar_texto_criterio(crit["item"]): crit["id"] for area in checklist_areas for crit in area["criterios"]}
+
+    # Mapeo retrocompatible para IDs de la versión inicial de PWA ("c1" a "c15")
+    legacy_map = {
+        "c1": "lobby_pisos",
+        "c2": "lobby_vidrios",
+        "c3": "lobby_counter",
+        "c4": "asc_botoneras",
+        "c5": "asc_acero",
+        "c6": "asc_rieles",
+        "c7": "ssh_aparatos",
+        "c8": "ssh_lavamanos",
+        "c9": "ssh_insumos",
+        "c10": "pas_pisos",
+        "c11": "pas_extintores",
+        "c12": "esc_pasos",
+        "c13": "esc_despeje",
+        "c14": "res_contenedores",
+        "c15": "res_olores"
+    }
+
+    items_raw = []
+    if "checklist_evaluacion" in pwa_data and isinstance(pwa_data["checklist_evaluacion"], list):
+        items_raw.extend(pwa_data["checklist_evaluacion"])
+    elif "detalles" in pwa_data and isinstance(pwa_data["detalles"], list):
+        items_raw.extend(pwa_data["detalles"])
+    elif "detalles" in cab and isinstance(cab["detalles"], list):
+        items_raw.extend(cab["detalles"])
+
+    if "evaluacion" in pwa_data:
+        ev = pwa_data["evaluacion"]
+        if isinstance(ev, dict):
+            for k, v in ev.items():
+                if isinstance(v, dict):
+                    v_copy = dict(v)
+                    v_copy["id_criterio"] = k
+                    items_raw.append(v_copy)
+                elif isinstance(v, str):
+                    items_raw.append({"id_criterio": k, "calificacion": v})
+        elif isinstance(ev, list):
+            items_raw.extend(ev)
+
+    criterios_cargados = 0
+    criterios_ya_procesados = set()
+
+    for item in items_raw:
+        if not isinstance(item, dict):
+            continue
+
+        raw_id = str(item.get("id_criterio") or item.get("id") or "").strip()
+        raw_item_txt = str(item.get("item_criterio") or item.get("item") or item.get("desc") or "").strip()
+        raw_calif = str(item.get("calificacion") or item.get("calif") or "C").strip().upper()
+        if raw_calif not in ("C", "R", "NC", "NA"):
+            raw_calif = "C"
+        raw_obs = str(item.get("observacion") or item.get("obs") or "").strip()
+
+        target_id = None
+        if raw_id in crit_map:
+            target_id = raw_id
+        elif raw_id in legacy_map and legacy_map[raw_id] in crit_map:
+            target_id = legacy_map[raw_id]
+        elif raw_item_txt:
+            norm_item = normalizar_texto_criterio(raw_item_txt)
+            if norm_item in crit_norm_map:
+                target_id = crit_norm_map[norm_item]
+            else:
+                for k_norm, cid_match in crit_norm_map.items():
+                    if norm_item and (norm_item in k_norm or k_norm in norm_item):
+                        target_id = cid_match
+                        break
+
+        if target_id and target_id in st.session_state.evaluacion_temp:
+            if target_id not in criterios_ya_procesados:
+                st.session_state.evaluacion_temp[target_id]["calificacion"] = raw_calif
+                st.session_state.evaluacion_temp[target_id]["observacion"] = raw_obs
+                st.session_state[f"rad_{target_id}"] = raw_calif
+                st.session_state[f"obs_{target_id}"] = raw_obs
+                criterios_ya_procesados.add(target_id)
+                criterios_cargados += 1
+
+    # 3. Incidencias CAPA
+    inc_raw = pwa_data.get("incidencias") or pwa_data.get("incidencias_capa") or cab.get("incidencias") or []
+    if isinstance(inc_raw, list) and inc_raw:
+        st.session_state.incidencias_temp = inc_raw
+
+    # 4. Registro Fotográfico
+    fotos_raw = pwa_data.get("fotos") or pwa_data.get("registro_fotografico") or cab.get("fotos") or []
+    fotos_importadas = 0
+    if isinstance(fotos_raw, list) and fotos_raw:
+        st.session_state.fotos_temp = []
+        st.session_state.fotos_cargadas_ids = set()
+        st.session_state["uploader_key_version"] = st.session_state.get("uploader_key_version", 0) + 1
+        for k in [k for k in list(st.session_state.keys()) if k.startswith("f_area_") or k.startswith("f_tipo_") or k.startswith("f_desc_") or k.startswith("sub_")]:
+            st.session_state.pop(k, None)
+
+        for p_foto in fotos_raw:
+            if not isinstance(p_foto, dict):
+                continue
+            foto_data = p_foto.get("data") or p_foto.get("archivo_data") or p_foto.get("foto_b64")
+            ruta_existente = p_foto.get("archivo_ruta") or ""
+
+            ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            rand_suffix = uuid.uuid4().hex[:6]
+            nom_arch = p_foto.get("archivo_nombre") or f"evidencia_pwa_{ts_str}_{rand_suffix}.jpg"
+
+            if foto_data:
+                ruta_arch = str(UPLOADS_DIR / nom_arch)
+                guardar_y_optimizar_imagen(foto_data, ruta_arch)
+            elif ruta_existente and os.path.exists(ruta_existente):
+                ruta_arch = os.path.normpath(ruta_existente)
+            else:
+                continue
+
+            uid = f"f_{ts_str}_{rand_suffix}"
+            area_nom = p_foto.get("area_nombre") or p_foto.get("area") or "General"
+            tipo_ev = p_foto.get("tipo_evidencia") or p_foto.get("tipo") or "Hallazgo / No Conforme"
+            desc_ev = p_foto.get("descripcion") or ""
+
+            # Importar fotos adicionales vinculadas a esta evidencia si vienen en el JSON
+            sub_fotos_importadas = []
+            for s_idx, sub_p in enumerate(p_foto.get("fotos_adicionales", [])):
+                if not isinstance(sub_p, dict):
+                    continue
+                sub_data = sub_p.get("data") or sub_p.get("archivo_data") or sub_p.get("foto_b64")
+                sub_exist = sub_p.get("archivo_ruta") or ""
+                sub_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                sub_rand = uuid.uuid4().hex[:6]
+                sub_nom = sub_p.get("archivo_nombre") or f"sub_evidencia_{sub_ts}_{sub_rand}.jpg"
+                if sub_data:
+                    sub_ruta = str(UPLOADS_DIR / sub_nom)
+                    guardar_y_optimizar_imagen(sub_data, sub_ruta)
+                elif sub_exist and os.path.exists(sub_exist):
+                    sub_ruta = os.path.normpath(sub_exist)
+                else:
+                    continue
+                sub_uid = f"sub_{sub_ts}_{sub_rand}"
+                sub_tipo = sub_p.get("tipo_evidencia") or "Después de Limpieza"
+                sub_desc = sub_p.get("descripcion") or ""
+                sub_fotos_importadas.append({
+                    "uid": sub_uid,
+                    "foto_padre_uid": uid,
+                    "area_nombre": area_nom,
+                    "tipo_evidencia": sub_tipo,
+                    "archivo_nombre": sub_nom,
+                    "archivo_ruta": sub_ruta,
+                    "descripcion": sub_desc,
+                    "origen": sub_p.get("origen", "FOTO_ADICIONAL")
+                })
+                st.session_state[f"sub_tipo_{sub_uid}"] = sub_tipo
+                st.session_state[f"sub_desc_{sub_uid}"] = sub_desc
+                st.session_state.fotos_cargadas_ids.add(sub_ruta)
+                st.session_state.fotos_cargadas_ids.add(sub_nom)
+                fotos_importadas += 1
+
+            st.session_state.fotos_temp.append({
+                "uid": uid,
+                "area_nombre": area_nom,
+                "tipo_evidencia": tipo_ev,
+                "archivo_nombre": nom_arch,
+                "archivo_ruta": ruta_arch,
+                "descripcion": desc_ev,
+                "origen": p_foto.get("origen", "PWA_OFFLINE"),
+                "fotos_adicionales": sub_fotos_importadas
+            })
+            st.session_state[f"f_area_{uid}"] = area_nom
+            st.session_state[f"f_tipo_{uid}"] = tipo_ev
+            st.session_state[f"f_desc_{uid}"] = desc_ev
+            st.session_state.fotos_cargadas_ids.add(ruta_arch)
+            st.session_state.fotos_cargadas_ids.add(nom_arch)
+            fotos_importadas += 1
+
+    return {
+        "ok": True,
+        "edificio": st.session_state.get("sel_edificio", ""),
+        "supervisor": st.session_state.get("sel_supervisor", ""),
+        "fecha": str(st.session_state.get("sel_fecha", "")),
+        "criterios_cargados": criterios_cargados,
+        "incidencias_cargadas": len(st.session_state.get("incidencias_temp", [])),
+        "fotos_cargadas": fotos_importadas
+    }
 
 
 def render_formulario_nueva_supervision():
@@ -58,6 +451,81 @@ def render_formulario_nueva_supervision():
             </div>
         </div>
     """, unsafe_allow_html=True)
+
+    # Cargar maestros y opciones desplegables desde la Base de Datos
+    edificios = obtener_lista_edificios(solo_activos=True)
+    supervisores = obtener_lista_supervisores(solo_activos=True)
+    tipos_inspeccion = obtener_tipos_inspeccion(solo_activos=True)
+    turnos_trabajo = obtener_turnos_trabajo(solo_activos=True)
+    checklist_areas = obtener_checklist_completo(solo_activos=True)
+
+    if not edificios:
+        st.warning("⚠️ No hay edificios registrados. Registra un edificio primero en la pestaña '⚙️ Configuración & Maestros'.")
+        return
+
+    # Inicializar estado en sesión para almacenar la evaluación temporal
+    if "evaluacion_temp" not in st.session_state or not st.session_state.evaluacion_temp:
+        st.session_state.evaluacion_temp = {}
+        for area in checklist_areas:
+            for crit in area["criterios"]:
+                st.session_state.evaluacion_temp[crit["id"]] = {
+                    "id_area": area["id_area"],
+                    "nombre_area": area["nombre"],
+                    "id_criterio": crit["id"],
+                    "item_criterio": crit["item"],
+                    "calificacion": "C",
+                    "observacion": ""
+                }
+
+    # Asegurar que nuevos criterios agregados en el configurador aparezcan en session_state
+    for area in checklist_areas:
+        for crit in area["criterios"]:
+            if crit["id"] not in st.session_state.evaluacion_temp:
+                st.session_state.evaluacion_temp[crit["id"]] = {
+                    "id_area": area["id_area"],
+                    "nombre_area": area["nombre"],
+                    "id_criterio": crit["id"],
+                    "item_criterio": crit["item"],
+                    "calificacion": "C",
+                    "observacion": ""
+                }
+
+    if "incidencias_temp" not in st.session_state:
+        st.session_state.incidencias_temp = []
+
+    if "fotos_temp" not in st.session_state:
+        st.session_state.fotos_temp = []
+
+    if "fotos_cargadas_ids" not in st.session_state:
+        st.session_state.fotos_cargadas_ids = set()
+
+    if "inc_uploader_ver" not in st.session_state:
+        st.session_state.inc_uploader_ver = 0
+
+    if "uploader_key_version" not in st.session_state:
+        st.session_state.uploader_key_version = 0
+
+    # Inicializar llaves de cabecera en session_state si no existen
+    if "sel_edificio" not in st.session_state and edificios:
+        st.session_state["sel_edificio"] = edificios[0]["nombre"]
+    if "sel_tipo_insp" not in st.session_state and tipos_inspeccion:
+        st.session_state["sel_tipo_insp"] = tipos_inspeccion[0]
+    if "sel_supervisor" not in st.session_state and supervisores:
+        st.session_state["sel_supervisor"] = supervisores[0]["nombre_completo"]
+    if "sel_turno" not in st.session_state and turnos_trabajo:
+        st.session_state["sel_turno"] = turnos_trabajo[0]
+    if "sel_fecha" not in st.session_state:
+        st.session_state["sel_fecha"] = date.today()
+    if "sel_hini" not in st.session_state:
+        st.session_state["sel_hini"] = time(8, 0)
+    if "sel_hfin" not in st.session_state:
+        st.session_state["sel_hfin"] = time(9, 30)
+    if "sel_lider" not in st.session_state:
+        st.session_state["sel_lider"] = "Técnico Líder en Turno"
+    if "p_prog" not in st.session_state:
+        st.session_state["p_prog"] = 4
+    if "p_pres" not in st.session_state:
+        st.session_state["p_pres"] = 4
 
     # 1. GESTIÓN DE BORRADORES PENDIENTES
     borradores = obtener_borradores_supervisiones()
@@ -121,7 +589,7 @@ def render_formulario_nueva_supervision():
                             st.session_state["uploader_key_version"] = st.session_state.get("uploader_key_version", 0) + 1
 
                             # Limpiar llaves residuales anteriores de fotos
-                            for k in [k for k in list(st.session_state.keys()) if k.startswith("f_area_") or k.startswith("f_tipo_") or k.startswith("f_desc_")]:
+                            for k in [k for k in list(st.session_state.keys()) if k.startswith("f_area_") or k.startswith("f_tipo_") or k.startswith("f_desc_") or k.startswith("sub_")]:
                                 st.session_state.pop(k, None)
 
                             rutas_vistas = set()
@@ -131,11 +599,39 @@ def render_formulario_nueva_supervision():
                                     ruta_norm = os.path.normpath(ruta_f)
                                     if os.path.exists(ruta_norm) and ruta_norm not in rutas_vistas:
                                         rutas_vistas.add(ruta_norm)
-                                        uid = f"f_{idx_f}_{uuid.uuid4().hex[:6]}"
+                                        uid = f.get("uid") or f"f_{idx_f}_{uuid.uuid4().hex[:6]}"
                                         nom_arch = f.get("archivo_nombre") or os.path.basename(ruta_norm)
                                         area_val = f.get("area_nombre", "General")
                                         tipo_val = f.get("tipo_evidencia", "Hallazgo / No Conforme")
                                         desc_val = f.get("descripcion", "")
+
+                                        # Restaurar fotos adicionales vinculadas a este borrador
+                                        sub_fotos_recup = []
+                                        for s_idx, sub_item in enumerate(f.get("fotos_adicionales", [])):
+                                            s_ruta = sub_item.get("archivo_ruta", "")
+                                            if s_ruta:
+                                                s_norm = os.path.normpath(s_ruta)
+                                                if os.path.exists(s_norm) and s_norm not in rutas_vistas:
+                                                    rutas_vistas.add(s_norm)
+                                                    s_uid = sub_item.get("uid") or f"sub_{uid}_{s_idx}_{uuid.uuid4().hex[:6]}"
+                                                    s_nom = sub_item.get("archivo_nombre") or os.path.basename(s_norm)
+                                                    s_tipo = sub_item.get("tipo_evidencia", "Después de Limpieza")
+                                                    s_desc = sub_item.get("descripcion", "")
+                                                    sub_fotos_recup.append({
+                                                        "uid": s_uid,
+                                                        "foto_padre_uid": uid,
+                                                        "area_nombre": area_val,
+                                                        "tipo_evidencia": s_tipo,
+                                                        "archivo_nombre": s_nom,
+                                                        "archivo_ruta": s_norm,
+                                                        "descripcion": s_desc,
+                                                        "origen": sub_item.get("origen", "FOTO_ADICIONAL")
+                                                    })
+                                                    st.session_state[f"sub_tipo_{s_uid}"] = s_tipo
+                                                    st.session_state[f"sub_desc_{s_uid}"] = s_desc
+                                                    st.session_state.fotos_cargadas_ids.add(s_norm)
+                                                    st.session_state.fotos_cargadas_ids.add(s_nom)
+
                                         st.session_state.fotos_temp.append({
                                             "uid": uid,
                                             "area_nombre": area_val,
@@ -143,7 +639,8 @@ def render_formulario_nueva_supervision():
                                             "archivo_nombre": nom_arch,
                                             "archivo_ruta": ruta_norm,
                                             "descripcion": desc_val,
-                                            "origen": f.get("origen", "REGISTRO_FOTOGRAFICO")
+                                            "origen": f.get("origen", "REGISTRO_FOTOGRAFICO"),
+                                            "fotos_adicionales": sub_fotos_recup
                                         })
                                         st.session_state[f"f_area_{uid}"] = area_val
                                         st.session_state[f"f_tipo_{uid}"] = tipo_val
@@ -183,95 +680,33 @@ def render_formulario_nueva_supervision():
                     st.session_state.pop(k, None)
                 st.rerun()
 
-    # 2. IMPORTACIÓN DESDE PWA OFFLINE (JSON)
-    with st.expander("📲 Importar Inspección Offline desde Aplicación Móvil (PWA)", expanded=False):
-        st.caption("Si realizó la supervisión en sótanos o zonas sin cobertura con la PWA móvil, cargue aquí el archivo JSON exportado:")
-        json_pwa_file = st.file_uploader("Subir archivo JSON de la PWA:", type=["json"], key="up_json_pwa")
-        if json_pwa_file:
+    # 2. IMPORTACIÓN DESDE PWA OFFLINE O HISTORIAL (JSON)
+    with st.expander("📲 Importar Supervisión desde Archivo JSON (PWA Móvil / Historial)", expanded=False):
+        st.markdown("""
+            Cargue aquí el archivo **`.json`** exportado desde la aplicación móvil PWA offline o descargado desde el Historial.
+            Se poblarán automáticamente la **sede**, **fecha**, **turno**, **dotación**, **checklist con calificaciones y observaciones**, **incidencias CAPA** y **fotografías** con su orientación original.
+        """)
+        json_supervision_file = st.file_uploader("Seleccione o arrastre el archivo JSON de supervisión:", type=["json"], key="up_json_supervision_main")
+        if json_supervision_file:
             try:
-                pwa_data = json.loads(json_pwa_file.getvalue().decode("utf-8"))
-                if st.button("📥 Importar Datos al Formulario", key="btn_do_import_pwa"):
-                    if "evaluacion" in pwa_data:
-                        for crit_id, val in pwa_data["evaluacion"].items():
-                            if crit_id in st.session_state.evaluacion_temp:
-                                st.session_state.evaluacion_temp[crit_id]["calificacion"] = val.get("calificacion", "C")
-                                st.session_state.evaluacion_temp[crit_id]["observacion"] = val.get("observacion", "")
-                    if "incidencias" in pwa_data:
-                        st.session_state.incidencias_temp = pwa_data["incidencias"]
-                    st.success("✅ Datos importados exitosamente desde la PWA. Verifique y finalice el informe.")
-                    st.rerun()
+                data_parsed = json.loads(json_supervision_file.getvalue().decode("utf-8"))
+                cab_prev = data_parsed.get("informe") if isinstance(data_parsed.get("informe"), dict) else data_parsed
+                p_edif = cab_prev.get("edificio_nombre") or data_parsed.get("edificio_nombre", "Sede")
+                p_sup = cab_prev.get("supervisor_nombre") or data_parsed.get("supervisor_nombre", "Supervisor")
+                p_fec = cab_prev.get("fecha_inspeccion") or data_parsed.get("fecha_inspeccion", "Fecha")
+                p_crit_n = len(data_parsed.get("checklist_evaluacion") or data_parsed.get("detalles") or data_parsed.get("evaluacion") or [])
+                p_foto_n = len(data_parsed.get("fotos") or data_parsed.get("registro_fotografico") or [])
+
+                col_prev1, col_prev2 = st.columns([3, 1.2])
+                with col_prev1:
+                    st.info(f"📄 **Archivo Detectado:** 🏢 `{p_edif}` | 👷 `{p_sup}` | 📅 `{p_fec}` | 🔍 `{p_crit_n}` criterios | 📸 `{p_foto_n}` foto(s)")
+                with col_prev2:
+                    if st.button("📥 Importar al Formulario", key="btn_do_import_json", type="primary", use_container_width=True):
+                        res_imp = procesar_importacion_json(data_parsed, checklist_areas, edificios, supervisores, tipos_inspeccion, turnos_trabajo)
+                        st.success(f"✅ ¡Supervisión importada exitosamente! Se cargaron {res_imp['criterios_cargados']} criterios y {res_imp['fotos_cargadas']} foto(s) para {res_imp['edificio']}.")
+                        st.rerun()
             except Exception as e:
-                st.error(f"Error al leer el archivo JSON: {e}")
-
-
-    # Cargar maestros y opciones desplegables desde la Base de Datos
-    edificios = obtener_lista_edificios(solo_activos=True)
-    supervisores = obtener_lista_supervisores(solo_activos=True)
-    tipos_inspeccion = obtener_tipos_inspeccion(solo_activos=True)
-    turnos_trabajo = obtener_turnos_trabajo(solo_activos=True)
-    checklist_areas = obtener_checklist_completo(solo_activos=True)
-
-    if not edificios:
-        st.warning("⚠️ No hay edificios registrados. Registra un edificio primero en la pestaña '⚙️ Configuración & Maestros'.")
-        return
-
-    # Inicializar estado en sesión para almacenar la evaluación temporal
-    if "evaluacion_temp" not in st.session_state or not st.session_state.evaluacion_temp:
-        st.session_state.evaluacion_temp = {}
-        for area in checklist_areas:
-            for crit in area["criterios"]:
-                st.session_state.evaluacion_temp[crit["id"]] = {
-                    "id_area": area["id_area"],
-                    "nombre_area": area["nombre"],
-                    "id_criterio": crit["id"],
-                    "item_criterio": crit["item"],
-                    "calificacion": "C",
-                    "observacion": ""
-                }
-
-    # Asegurar que nuevos criterios agregados en el configurador aparezcan en session_state
-    for area in checklist_areas:
-        for crit in area["criterios"]:
-            if crit["id"] not in st.session_state.evaluacion_temp:
-                st.session_state.evaluacion_temp[crit["id"]] = {
-                    "id_area": area["id_area"],
-                    "nombre_area": area["nombre"],
-                    "id_criterio": crit["id"],
-                    "item_criterio": crit["item"],
-                    "calificacion": "C",
-                    "observacion": ""
-                }
-
-    if "incidencias_temp" not in st.session_state:
-        st.session_state.incidencias_temp = []
-
-    if "fotos_temp" not in st.session_state:
-        st.session_state.fotos_temp = []
-
-    if "inc_uploader_ver" not in st.session_state:
-        st.session_state.inc_uploader_ver = 0
-
-    # Inicializar llaves de cabecera en session_state si no existen
-    if "sel_edificio" not in st.session_state and edificios:
-        st.session_state["sel_edificio"] = edificios[0]["nombre"]
-    if "sel_tipo_insp" not in st.session_state and tipos_inspeccion:
-        st.session_state["sel_tipo_insp"] = tipos_inspeccion[0]
-    if "sel_supervisor" not in st.session_state and supervisores:
-        st.session_state["sel_supervisor"] = supervisores[0]["nombre_completo"]
-    if "sel_turno" not in st.session_state and turnos_trabajo:
-        st.session_state["sel_turno"] = turnos_trabajo[0]
-    if "sel_fecha" not in st.session_state:
-        st.session_state["sel_fecha"] = date.today()
-    if "sel_hini" not in st.session_state:
-        st.session_state["sel_hini"] = time(8, 0)
-    if "sel_hfin" not in st.session_state:
-        st.session_state["sel_hfin"] = time(9, 30)
-    if "sel_lider" not in st.session_state:
-        st.session_state["sel_lider"] = "Técnico Líder en Turno"
-    if "p_prog" not in st.session_state:
-        st.session_state["p_prog"] = 4
-    if "p_pres" not in st.session_state:
-        st.session_state["p_pres"] = 4
+                st.error(f"❌ Error al interpretar el archivo JSON: {e}")
 
     # Estructura en 5 Secciones principales (Tabs)
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -708,7 +1143,10 @@ def render_formulario_nueva_supervision():
 
         # Galería de Fotos Registradas (Cargadas o Traídas del Borrador)
         if st.session_state.fotos_temp:
-            st.markdown(f"#### 🖼️ Evidencias Fotográficas del Informe ({len(st.session_state.fotos_temp)} cargada(s)):")
+            total_adicionales = sum(len(f.get("fotos_adicionales", [])) for f in st.session_state.fotos_temp)
+            total_fotos = len(st.session_state.fotos_temp) + total_adicionales
+            badge_info = f" ({len(st.session_state.fotos_temp)} principales" + (f" + {total_adicionales} adicionales" if total_adicionales > 0 else "") + f" — {total_fotos} total)"
+            st.markdown(f"#### 🖼️ Evidencias Fotográficas del Informe{badge_info}:")
             indices_a_eliminar = []
             nombres_areas = [a["nombre"] for a in checklist_areas] if checklist_areas else []
             for extra_a in ["General / Cuadrilla", "General"]:
@@ -721,18 +1159,29 @@ def render_formulario_nueva_supervision():
                 if not uid:
                     uid = f"f_{idx}_{uuid.uuid4().hex[:6]}"
                     foto["uid"] = uid
+                if "fotos_adicionales" not in foto:
+                    foto["fotos_adicionales"] = []
 
                 with st.container():
-                    col_img, col_meta, col_del = st.columns([1.2, 2.8, 0.4])
+                    col_img, col_meta, col_actions = st.columns([1.3, 2.7, 0.5])
                     with col_img:
                         if os.path.exists(foto.get("archivo_ruta", "")):
                             st.image(foto["archivo_ruta"], use_container_width=True)
+                            try:
+                                with Image.open(foto["archivo_ruta"]) as t_img:
+                                    es_v = t_img.size[1] > t_img.size[0]
+                                    tag_orient = "📱 Vertical" if es_v else "💻 Horizontal"
+                                    st.caption(f"Posición: **{tag_orient}** ({t_img.size[0]}x{t_img.size[1]})")
+                            except Exception:
+                                pass
                         else:
                             st.warning("⚠️ Archivo no encontrado")
                     with col_meta:
                         orig_f = foto.get("origen", "REGISTRO_FOTOGRAFICO")
                         if orig_f == "CAPA":
                             st.markdown("<span style='background:#FEE2E2; color:#B91C1C; padding:2px 8px; border-radius:6px; font-weight:700; font-size:0.78rem;'>⚠️ Origen: Incidencia / No Conformidad (CAPA)</span>", unsafe_allow_html=True)
+                        elif orig_f == "PWA_OFFLINE":
+                            st.markdown("<span style='background:#DCFCE7; color:#15803D; padding:2px 8px; border-radius:6px; font-weight:700; font-size:0.78rem;'>📲 Origen: App Móvil PWA Offline</span>", unsafe_allow_html=True)
                         else:
                             st.markdown("<span style='background:#E0F2FE; color:#0369A1; padding:2px 8px; border-radius:6px; font-weight:700; font-size:0.78rem;'>📸 Origen: Registro Fotográfico de Calidad</span>", unsafe_allow_html=True)
 
@@ -751,10 +1200,157 @@ def render_formulario_nueva_supervision():
                         curr_desc = foto.get("descripcion", "")
                         sel_d = st.text_input(f"Descripción Técnica (Foto #{idx+1}):", value=curr_desc, placeholder="Ej: Mancha tratada en piso con desengrasante...", key=f"f_desc_{uid}")
                         foto["descripcion"] = sel_d
-                    with col_del:
+                    with col_actions:
                         st.markdown("<br/>", unsafe_allow_html=True)
+                        if st.button("🔄", key=f"btn_rot_foto_{uid}", help="Rotar foto 90° horario si la tomó invertida"):
+                            if rotar_imagen_guardada(foto.get("archivo_ruta", ""), 90):
+                                st.rerun()
                         if st.button("🗑️", key=f"btn_del_foto_{uid}", help="Eliminar esta foto"):
                             indices_a_eliminar.append(idx)
+
+                    # Sub-sección: Fotos adicionales vinculadas a esta evidencia si existen
+                    sub_del_indices = []
+                    if foto.get("fotos_adicionales"):
+                        st.markdown(f"**📸 Fotos Adicionales / Complementarias vinculadas ({len(foto['fotos_adicionales'])}):**")
+                        tipos_adicionales = [
+                            "Después de Limpieza",
+                            "Detalle / Acercamiento",
+                            "Ángulo Adicional",
+                            "Subsanación de Hallazgo",
+                            "Antes de Limpieza",
+                            "General de Calidad"
+                        ]
+                        for s_i, sub_f in enumerate(foto["fotos_adicionales"]):
+                            sub_uid = sub_f.get("uid") or f"sub_{uid}_{s_i}"
+                            sub_f["uid"] = sub_uid
+                            with st.container():
+                                c_simg, c_smeta, c_sact = st.columns([1.1, 2.9, 0.5])
+                                with c_simg:
+                                    if os.path.exists(sub_f.get("archivo_ruta", "")):
+                                        st.image(sub_f["archivo_ruta"], use_container_width=True)
+                                        try:
+                                            with Image.open(sub_f["archivo_ruta"]) as s_img:
+                                                s_es_v = s_img.size[1] > s_img.size[0]
+                                                s_orient = "📱 Vertical" if s_es_v else "💻 Horizontal"
+                                                st.caption(f"**{s_orient}** ({s_img.size[0]}x{s_img.size[1]})")
+                                        except Exception:
+                                            pass
+                                    else:
+                                        st.warning("⚠️ Archivo no encontrado")
+                                with c_smeta:
+                                    st.markdown("<span style='background:#F0FDF4; color:#166534; padding:2px 8px; border-radius:6px; font-weight:700; font-size:0.75rem; border:1px solid #BBF7D0;'>📸 Evidencia Adicional / Complementaria</span>", unsafe_allow_html=True)
+                                    cur_stipo = sub_f.get("tipo_evidencia", "Después de Limpieza")
+                                    if cur_stipo not in tipos_adicionales:
+                                        tipos_adicionales.append(cur_stipo)
+                                    idx_st = tipos_adicionales.index(cur_stipo)
+                                    sel_st = st.selectbox(
+                                        f"Tipo Adicional (#{idx+1}.{s_i+1}):",
+                                        tipos_adicionales,
+                                        index=idx_st,
+                                        key=f"sub_tipo_{sub_uid}"
+                                    )
+                                    sub_f["tipo_evidencia"] = sel_st
+
+                                    cur_sdesc = sub_f.get("descripcion", "")
+                                    sel_sd = st.text_input(
+                                        f"Descripción Adicional (#{idx+1}.{s_i+1}):",
+                                        value=cur_sdesc,
+                                        placeholder="Ej: Estado después de pulido / Segunda vista...",
+                                        key=f"sub_desc_{sub_uid}"
+                                    )
+                                    sub_f["descripcion"] = sel_sd
+                                with c_sact:
+                                    st.markdown("<br/>", unsafe_allow_html=True)
+                                    if st.button("🔄", key=f"btn_rot_sub_{sub_uid}", help="Rotar 90° horario esta foto adicional"):
+                                        if rotar_imagen_guardada(sub_f.get("archivo_ruta", ""), 90):
+                                            st.rerun()
+                                    if st.button("🗑️", key=f"btn_del_sub_{sub_uid}", help="Eliminar esta foto adicional"):
+                                        sub_del_indices.append(s_i)
+
+                    if sub_del_indices:
+                        for s_del_i in sorted(sub_del_indices, reverse=True):
+                            s_del_item = foto["fotos_adicionales"].pop(s_del_i)
+                            s_del_u = s_del_item.get("uid")
+                            if s_del_u:
+                                st.session_state.pop(f"sub_tipo_{s_del_u}", None)
+                                st.session_state.pop(f"sub_desc_{s_del_u}", None)
+                            s_del_r = s_del_item.get("archivo_ruta", "")
+                            if s_del_r and os.path.exists(s_del_r):
+                                try:
+                                    os.remove(s_del_r)
+                                except Exception:
+                                    pass
+                        st.rerun()
+
+                    # Control interactivo para agregar fotos adicionales a esta evidencia
+                    with st.expander(f"➕ Agregar Foto Adicional a esta Evidencia (#{idx+1} — {foto.get('area_nombre', '')})", expanded=False):
+                        c_smet1, c_smet2 = st.columns([2, 1.5])
+                        with c_smet1:
+                            sub_metodo = st.radio(
+                                f"Método de captura (Foto #{idx+1}):",
+                                ["📁 Cargar desde Archivos / Galería", "📸 Tomar con Cámara"],
+                                horizontal=True,
+                                key=f"sub_metodo_{uid}"
+                            )
+                        sub_ver = st.session_state.get(f"sub_ver_{uid}", 0)
+                        archivos_sub_nuevos = []
+                        if sub_metodo == "📁 Cargar desde Archivos / Galería":
+                            archivos_sub_nuevos = st.file_uploader(
+                                f"Seleccionar foto(s) adicional(es) para evidencia #{idx+1}:",
+                                type=["png", "jpg", "jpeg"],
+                                accept_multiple_files=True,
+                                key=f"up_sub_{uid}_{sub_ver}"
+                            )
+                        else:
+                            sub_cam_inp = st.camera_input(
+                                f"Capturar foto adicional en vivo para evidencia #{idx+1}:",
+                                key=f"cam_sub_{uid}_{sub_ver}"
+                            )
+                            if sub_cam_inp:
+                                archivos_sub_nuevos = [sub_cam_inp]
+
+                        if archivos_sub_nuevos:
+                            agregadas_sub = 0
+                            for sf in archivos_sub_nuevos:
+                                sf_bytes = sf.getvalue()
+                                if not sf_bytes:
+                                    continue
+                                sf_hash = hashlib.md5(sf_bytes).hexdigest()
+                                if sf_hash in st.session_state.fotos_cargadas_ids:
+                                    continue
+
+                                ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                rand_suffix = uuid.uuid4().hex[:6]
+                                sub_nom = f"evidencia_adicional_{ts_str}_{rand_suffix}.jpg"
+                                sub_ruta = str(UPLOADS_DIR / sub_nom)
+                                guardar_y_optimizar_imagen(sf_bytes, sub_ruta)
+
+                                new_sub_uid = f"sub_{ts_str}_{rand_suffix}"
+                                def_tipo = "Después de Limpieza" if "Antes" in foto.get("tipo_evidencia", "") or "Hallazgo" in foto.get("tipo_evidencia", "") else "Ángulo Adicional"
+                                def_desc = f"Foto adicional ({def_tipo})"
+
+                                foto.setdefault("fotos_adicionales", []).append({
+                                    "uid": new_sub_uid,
+                                    "foto_padre_uid": uid,
+                                    "area_nombre": foto.get("area_nombre", "General"),
+                                    "tipo_evidencia": def_tipo,
+                                    "archivo_nombre": sub_nom,
+                                    "archivo_ruta": sub_ruta,
+                                    "descripcion": def_desc,
+                                    "origen": "FOTO_ADICIONAL"
+                                })
+                                st.session_state[f"sub_tipo_{new_sub_uid}"] = def_tipo
+                                st.session_state[f"sub_desc_{new_sub_uid}"] = def_desc
+                                st.session_state.fotos_cargadas_ids.add(sf_hash)
+                                st.session_state.fotos_cargadas_ids.add(sub_ruta)
+                                st.session_state.fotos_cargadas_ids.add(sub_nom)
+                                agregadas_sub += 1
+
+                            if agregadas_sub > 0:
+                                st.session_state[f"sub_ver_{uid}"] = sub_ver + 1
+                                st.success(f"✅ Se agregó(aron) {agregadas_sub} foto(s) adicional(es) a la evidencia #{idx+1}.")
+                                st.rerun()
+
                     st.divider()
 
             if indices_a_eliminar:
@@ -765,12 +1361,25 @@ def render_formulario_nueva_supervision():
                         st.session_state.pop(f"f_area_{uid_del}", None)
                         st.session_state.pop(f"f_tipo_{uid_del}", None)
                         st.session_state.pop(f"f_desc_{uid_del}", None)
+                        st.session_state.pop(f"sub_ver_{uid_del}", None)
+                        st.session_state.pop(f"sub_metodo_{uid_del}", None)
                     r_del = f_del.get("archivo_ruta", "")
                     if r_del and os.path.exists(r_del):
                         try:
                             os.remove(r_del)
                         except Exception:
                             pass
+                    for sub_del in f_del.get("fotos_adicionales", []):
+                        sub_u = sub_del.get("uid")
+                        if sub_u:
+                            st.session_state.pop(f"sub_tipo_{sub_u}", None)
+                            st.session_state.pop(f"sub_desc_{sub_u}", None)
+                        s_r = sub_del.get("archivo_ruta", "")
+                        if s_r and os.path.exists(s_r):
+                            try:
+                                os.remove(s_r)
+                            except Exception:
+                                pass
                 st.rerun()
         else:
             st.info("ℹ️ Aún no hay fotografías cargadas. Use el selector arriba para agregar evidencias.")
@@ -1017,6 +1626,32 @@ def render_formulario_nueva_supervision():
                     rutas_procesadas.add(ruta_norm)
 
                     nom_arch = f.get("archivo_nombre") or os.path.basename(ruta_norm)
+
+                    # Procesar fotos adicionales vinculadas a esta evidencia
+                    sub_a_guardar = []
+                    for s_idx, sub_f in enumerate(f.get("fotos_adicionales", [])):
+                        sub_uid = sub_f.get("uid", f"sub_{uid}_{s_idx}")
+                        sub_r = sub_f.get("archivo_ruta", "")
+                        if not sub_r:
+                            continue
+                        sub_r_norm = os.path.normpath(sub_r)
+                        if not os.path.exists(sub_r_norm) or sub_r_norm in rutas_procesadas:
+                            continue
+                        rutas_procesadas.add(sub_r_norm)
+                        sub_nom = sub_f.get("archivo_nombre") or os.path.basename(sub_r_norm)
+                        sub_t = st.session_state.get(f"sub_tipo_{sub_uid}", sub_f.get("tipo_evidencia", "Después de Limpieza"))
+                        sub_d = st.session_state.get(f"sub_desc_{sub_uid}", sub_f.get("descripcion", ""))
+                        sub_a_guardar.append({
+                            "uid": sub_uid,
+                            "foto_padre_uid": uid,
+                            "area_nombre": f_area,
+                            "tipo_evidencia": sub_t,
+                            "archivo_nombre": sub_nom,
+                            "archivo_ruta": sub_r_norm,
+                            "descripcion": sub_d,
+                            "origen": sub_f.get("origen", "FOTO_ADICIONAL")
+                        })
+
                     fotos_a_guardar.append({
                         "uid": uid,
                         "area_nombre": f_area,
@@ -1024,7 +1659,8 @@ def render_formulario_nueva_supervision():
                         "archivo_nombre": nom_arch,
                         "archivo_ruta": ruta_norm,
                         "descripcion": f_desc,
-                        "origen": f.get("origen", "REGISTRO_FOTOGRAFICO")
+                        "origen": f.get("origen", "REGISTRO_FOTOGRAFICO"),
+                        "fotos_adicionales": sub_a_guardar
                     })
 
                 # Preparar datos generales
@@ -1100,6 +1736,10 @@ def render_formulario_nueva_supervision():
                         st.session_state[f"f_area_{u}"] = it_f["area_nombre"]
                         st.session_state[f"f_tipo_{u}"] = it_f["tipo_evidencia"]
                         st.session_state[f"f_desc_{u}"] = it_f["descripcion"]
+                        for it_sub in it_f.get("fotos_adicionales", []):
+                            su = it_sub["uid"]
+                            st.session_state[f"sub_tipo_{su}"] = it_sub["tipo_evidencia"]
+                            st.session_state[f"sub_desc_{su}"] = it_sub["descripcion"]
                     st.info(f"💾 Avance guardado como **BORRADOR** con código: `{cod_gen}`. Su trabajo continúa a salvo.")
                 else:
                     # Generar PDF inmediatamente para descarga
@@ -1128,7 +1768,7 @@ def render_formulario_nueva_supervision():
                     st.session_state.pop("fotos_cargadas_ids", None)
                     st.session_state["uploader_key_version"] = st.session_state.get("uploader_key_version", 0) + 1
                     st.session_state["inc_uploader_ver"] = st.session_state.get("inc_uploader_ver", 0) + 1
-                    keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith("rad_") or k.startswith("obs_") or k.startswith("sel_") or k.startswith("p_") or k.startswith("f_") or (k.startswith("inc_") and k != "inc_uploader_ver")]
+                    keys_to_del = [k for k in list(st.session_state.keys()) if k.startswith("rad_") or k.startswith("obs_") or k.startswith("sel_") or k.startswith("p_") or k.startswith("f_") or k.startswith("sub_") or (k.startswith("inc_") and k != "inc_uploader_ver")]
                     for k in keys_to_del:
                         st.session_state.pop(k, None)
 

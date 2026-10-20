@@ -7,7 +7,7 @@ semáforo de calidad de 5 niveles y sección de firmas configurable.
 import io
 import os
 import base64
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageOps
 from datetime import datetime
 
 from reportlab.lib.pagesizes import letter
@@ -488,6 +488,20 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
             else:
                 fotos_calidad.append(f)
 
+            # Incorporar también fotos adicionales / complementarias asociadas a esta evidencia
+            for sub_f in f.get("fotos_adicionales", []):
+                sub_r_norm = os.path.normpath(sub_f.get("archivo_ruta", ""))
+                sub_origen = str(sub_f.get("origen", "")).upper()
+                sub_tipo = str(sub_f.get("tipo_evidencia", "")).upper()
+                sub_dict = dict(sub_f)
+                if not sub_dict.get("area_nombre"):
+                    sub_dict["area_nombre"] = f.get("area_nombre", "General")
+                sub_dict["es_adicional"] = True
+                if sub_origen == "CAPA" or sub_r_norm in rutas_incidencias or "CAPA" in sub_tipo or "INCIDENCIA" in sub_origen or origen_f == "CAPA":
+                    fotos_capa.append(sub_dict)
+                else:
+                    fotos_calidad.append(sub_dict)
+
         max_foto_w = 3.4 * inch
         max_foto_h = 2.3 * inch
 
@@ -498,24 +512,49 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
                 if os.path.exists(ruta_foto):
                     try:
                         with PILImage.open(ruta_foto) as p_img:
-                            orig_w, orig_h = p_img.size
-                            scale = min(max_foto_w / orig_w, max_foto_h / orig_h)
+                            # 1. Asegurar orientación EXIF física (vertical u horizontal)
+                            p_img_corr = ImageOps.exif_transpose(p_img)
+                            orig_w, orig_h = p_img_corr.size
+
+                            es_vertical = orig_h > orig_w
+                            if es_vertical:
+                                # Proporciones optimizadas para fotos verticales:
+                                max_w = 2.6 * inch
+                                max_h = 2.85 * inch
+                            else:
+                                # Proporciones optimizadas para fotos horizontales:
+                                max_w = 3.4 * inch
+                                max_h = 2.3 * inch
+
+                            scale = min(max_w / orig_w, max_h / orig_h)
                             final_w = orig_w * scale
                             final_h = orig_h * scale
 
-                        img_flowable = Image(ruta_foto, width=final_w, height=final_h)
+                            # Exportar a BytesIO para garantizar que ReportLab dibuje la imagen
+                            # con la orientación ya transpuesta (sin depender de EXIF en ReportLab)
+                            img_buf = io.BytesIO()
+                            if p_img_corr.mode in ("RGBA", "P"):
+                                p_img_corr = p_img_corr.convert("RGB")
+                            p_img_corr.save(img_buf, format="JPEG", quality=88)
+                            img_buf.seek(0)
+
+                        img_flowable = Image(img_buf, width=final_w, height=final_h)
+                        img_flowable.hAlign = 'CENTER'
+
                         area_f = f.get("area_nombre", "General")
                         desc_f = f.get("descripcion", "")
                         tipo_f = f.get("tipo_evidencia", "Evidencia")
+                        es_adic = f.get("es_adicional") or f.get("origen") == "FOTO_ADICIONAL"
+                        tag_adic = " (Adicional)" if es_adic else ""
 
                         if es_capa:
-                            caption_text = f"<b><font color='#DC2626'>[INCIDENCIA / CAPA]</font> {area_f}:</b> <font color='#1E293B'>{desc_f}</font>"
+                            caption_text = f"<b><font color='#DC2626'>[INCIDENCIA / CAPA{tag_adic}]</font> {area_f}:</b> <font color='#1E293B'>{desc_f}</font>"
                         else:
-                            caption_text = f"<b><font color='#0284C7'>[CONTROL DE CALIDAD]</font> {tipo_f} — {area_f}:</b> <font color='#475569'>{desc_f}</font>"
+                            caption_text = f"<b><font color='#0284C7'>[CONTROL DE CALIDAD{tag_adic}]</font> {tipo_f} — {area_f}:</b> <font color='#475569'>{desc_f}</font>"
 
                         cell_content = [
                             img_flowable,
-                            Spacer(1, 2),
+                            Spacer(1, 3),
                             Paragraph(caption_text, body_style)
                         ]
                         cells.append(cell_content)
@@ -537,6 +576,7 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
             foto_table = Table(foto_table_data, colWidths=[3.7*inch, 3.7*inch])
             foto_table.setStyle(TableStyle([
                 ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
                 ('LEFTPADDING', (0,0), (-1,-1), 4),
                 ('RIGHTPADDING', (0,0), (-1,-1), 4),
                 ('BOTTOMPADDING', (0,0), (-1,-1), 8),

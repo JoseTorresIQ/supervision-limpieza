@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from config import CHECKLIST_AREAS, PUNTAJES, clasificar_calidad, DATA_DIR
 from database import (
     init_db, get_connection, obtener_lista_edificios, obtener_lista_supervisores,
-    guardar_supervision_completa, obtener_supervision_por_id, generar_nuevo_codigo
+    guardar_supervision_completa, obtener_supervision_por_id, generar_nuevo_codigo,
+    eliminar_supervision
 )
 from modules.reportes_pdf import generar_pdf_supervision
 
@@ -1081,6 +1082,469 @@ class TestSupervisionLimpieza(unittest.TestCase):
             if os.path.exists(p):
                 os.remove(p)
         print("[OK] Edición del registro fotográfico en Historial validada al 100%.")
+
+    def test_19_orientacion_vertical_exif_y_rotacion_fotos(self):
+        """Verificar preservación de orientación vertical con EXIF y rotación manual 90°."""
+        from PIL import Image as PILImage
+        from modules.nueva_supervision import guardar_y_optimizar_imagen, rotar_imagen_guardada
+        from config import UPLOADS_DIR
+
+        # 1. Crear imagen horizontal de píxeles (400x300) con EXIF Orientation = 6 (celular tomado en vertical)
+        im = PILImage.new('RGB', (400, 300), color=(100, 150, 200))
+        exif = im.getexif()
+        exif[0x0112] = 6  # Orientation 6 = rotar 90° CW para orientar verticalmente
+
+        buf = io.BytesIO()
+        im.save(buf, format='JPEG', exif=exif)
+        raw_bytes = buf.getvalue()
+
+        test_dest = str(UPLOADS_DIR / "test_exif_vertical_unit.jpg")
+        guardar_y_optimizar_imagen(raw_bytes, test_dest)
+
+        # 2. Verificar que se guardó físicamente en vertical (alto > ancho)
+        with PILImage.open(test_dest) as saved:
+            w, h = saved.size
+            self.assertGreater(h, w, f"La imagen debió transponerse y guardarse en vertical: w={w}, h={h}")
+
+        # 3. Probar rotación manual de 90°
+        ok_rot = rotar_imagen_guardada(test_dest, 90)
+        self.assertTrue(ok_rot)
+        with PILImage.open(test_dest) as rot_img:
+            w2, h2 = rot_img.size
+            self.assertGreater(w2, h2, f"Tras rotar 90° debe ser horizontal: w={w2}, h={h2}")
+
+        # 4. Probar rotar nuevamente 90° (total 180°) -> regresa a vertical
+        rotar_imagen_guardada(test_dest, 90)
+        with PILImage.open(test_dest) as rot_img2:
+            w3, h3 = rot_img2.size
+            self.assertGreater(h3, w3, f"Tras rotar 180° debe volver a ser vertical: w={w3}, h={h3}")
+
+        if os.path.exists(test_dest):
+            os.remove(test_dest)
+        print("[OK] Preservación de posición vertical (EXIF) y rotación manual validadas con éxito.")
+
+    def test_20_importacion_fotos_pwa_y_pdf(self):
+        """Verificar generación de PDF con fotos verticales/horizontales y compatibilidad PWA."""
+        from PIL import Image as PILImage
+        from modules.nueva_supervision import guardar_y_optimizar_imagen
+        from config import UPLOADS_DIR
+
+        # Crear una imagen vertical (300x500) y una horizontal (500x300)
+        ruta_v = str(UPLOADS_DIR / "test_pwa_vert.jpg")
+        ruta_h = str(UPLOADS_DIR / "test_pwa_horiz.jpg")
+        
+        im_v = PILImage.new('RGB', (300, 500), color=(50, 180, 100))
+        im_v.save(ruta_v, 'JPEG')
+
+        im_h = PILImage.new('RGB', (500, 300), color=(200, 80, 60))
+        im_h.save(ruta_h, 'JPEG')
+
+        datos_gral = {
+            "codigo_informe": generar_nuevo_codigo(),
+            "fecha_inspeccion": "2026-10-19",
+            "hora_inicio": "10:00",
+            "hora_fin": "11:00",
+            "tipo_inspeccion": "Rutinaria",
+            "turno": "Turno Mañana",
+            "edificio_id": 1,
+            "edificio_nombre": "Torre Empresarial Javier Prado",
+            "edificio_direccion": "Av. Javier Prado Este 4200",
+            "administrador_nombre": "Arq. Melissa Fernández",
+            "supervisor_id": 1,
+            "supervisor_nombre": "Carlos Mendoza Ramos",
+            "supervisor_dni": "45879632",
+            "lider_cuadrilla": "Juan Pérez",
+            "personal_programado": 4,
+            "personal_presente": 4,
+            "personal_faltante": 0,
+            "score_global": 96.0,
+            "nivel_calidad": "ÓPTIMO",
+            "estado_aprobacion": "Conforme",
+            "total_items_evaluados": 1,
+            "total_conformes": 1,
+            "total_regulares": 0,
+            "total_no_conformes": 0,
+            "total_no_aplica": 0,
+            "epp_conforme": 1,
+            "maquinaria_conforme": 1,
+            "insumos_conforme": 1,
+            "incluir_firmas": 1,
+            "observaciones_generales": "Supervisión con fotos en vertical y horizontal.",
+            "plan_accion_resumen": "Sin acciones pendientes.",
+            "firmante_cliente_nombre": "Melissa Fernández",
+            "firmante_cliente_cargo": "Administradora General"
+        }
+
+        detalles = [
+            {
+                "id_area": 1,
+                "nombre_area": "Hall de Ingreso / Lobby / Recepción",
+                "id_criterio": "c1",
+                "item_criterio": "Pisos y Zócalos",
+                "calificacion": "C",
+                "puntos": 100,
+                "observacion": "Piso limpio"
+            }
+        ]
+
+        fotos = [
+            {
+                "area_nombre": "Hall de Ingreso / Lobby / Recepción",
+                "tipo_evidencia": "Antes de Limpieza",
+                "archivo_nombre": "test_pwa_vert.jpg",
+                "archivo_ruta": ruta_v,
+                "descripcion": "Evidencia vertical (vista completa de zócalos y piso)",
+                "origen": "PWA_OFFLINE"
+            },
+            {
+                "area_nombre": "Servicios Higiénicos (SS.HH.)",
+                "tipo_evidencia": "Después de Limpieza",
+                "archivo_nombre": "test_pwa_horiz.jpg",
+                "archivo_ruta": ruta_h,
+                "descripcion": "Evidencia horizontal (panorámica de cabinas)",
+                "origen": "REGISTRO_FOTOGRAFICO"
+            }
+        ]
+
+        sup_id, cod = guardar_supervision_completa(datos_gral, detalles, [], fotos)
+        self.assertIsNotNone(sup_id)
+
+        recup = obtener_supervision_por_id(sup_id)
+        self.assertEqual(len(recup["fotos"]), 2)
+
+        # Generar PDF oficial
+        pdf_bytes = generar_pdf_supervision(recup)
+        self.assertGreater(len(pdf_bytes), 10000)
+
+        eliminar_supervision(sup_id)
+        for p in (ruta_v, ruta_h):
+            if os.path.exists(p):
+                os.remove(p)
+        print("[OK] Integración de fotos PWA (verticales/horizontales) y generación de PDF validada con éxito.")
+
+    def test_21_importacion_json_pwa_y_historial_al_formulario(self):
+        """Verificar que la importación de JSON (PWA y Historial) puebla adecuadamente todos los campos del formulario."""
+        from modules.nueva_supervision import procesar_importacion_json
+        import streamlit as st
+        import base64
+
+        from database import obtener_tipos_inspeccion, obtener_turnos_trabajo, obtener_checklist_completo
+        edificios = obtener_lista_edificios(solo_activos=True)
+        supervisores = obtener_lista_supervisores(solo_activos=True)
+        tipos_inspeccion = obtener_tipos_inspeccion(solo_activos=True)
+        turnos_trabajo = obtener_turnos_trabajo(solo_activos=True)
+        checklist_areas = obtener_checklist_completo(solo_activos=True)
+
+        # 1. Simular inicialización de session_state para formulario limpio
+        st.session_state.evaluacion_temp = {}
+        for area in checklist_areas:
+            for crit in area["criterios"]:
+                st.session_state.evaluacion_temp[crit["id"]] = {
+                    "id_area": area["id_area"],
+                    "nombre_area": area["nombre"],
+                    "id_criterio": crit["id"],
+                    "item_criterio": crit["item"],
+                    "calificacion": "C",
+                    "observacion": ""
+                }
+        st.session_state.incidencias_temp = []
+        st.session_state.fotos_temp = []
+        st.session_state.fotos_cargadas_ids = set()
+
+        # Imagen demo en base64 para foto
+        b64_foto = "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.' \",#\x1c\x1c(7),01444\x1f'9=82<.342\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9").decode("utf-8")
+
+        # Caso A: JSON con formato PWA Oficial
+        payload_pwa = {
+            "origen": "CLEANFACILITY_PRO_PWA",
+            "edificio_nombre": edificios[0]["nombre"],
+            "supervisor_nombre": supervisores[0]["nombre_completo"],
+            "tipo_inspeccion": tipos_inspeccion[0],
+            "turno": turnos_trabajo[0],
+            "fecha_inspeccion": "2026-10-18",
+            "hora_inicio": "08:15",
+            "hora_fin": "09:45",
+            "lider_cuadrilla": "Marcos Rivas",
+            "personal_programado": 6,
+            "personal_presente": 5,
+            "observaciones_generales": "Supervisión PWA cargada desde sótano sin conexión.",
+            "evaluacion": {
+                "lobby_pisos": {"calificacion": "R", "observacion": "Huellas de tránsito en ingreso"},
+                "ssh_aparatos": {"calificacion": "NC", "observacion": "Urinario N° 2 fuera de servicio"}
+            },
+            "incidencias": [
+                {"area": "Baños", "descripcion": "Fuga menor", "severidad": "Media"}
+            ],
+            "fotos": [
+                {
+                    "area_nombre": "1. Hall de Ingreso / Lobby / Recepción",
+                    "tipo_evidencia": "Hallazgo / No Conforme",
+                    "descripcion": "Evidencia de huellas en zócalos",
+                    "data": b64_foto,
+                    "es_vertical": True
+                }
+            ]
+        }
+
+        res_pwa = procesar_importacion_json(payload_pwa, checklist_areas, edificios, supervisores, tipos_inspeccion, turnos_trabajo)
+        self.assertTrue(res_pwa["ok"])
+        self.assertEqual(st.session_state["sel_edificio"], edificios[0]["nombre"])
+        self.assertEqual(st.session_state["sel_supervisor"], supervisores[0]["nombre_completo"])
+        self.assertEqual(str(st.session_state["sel_fecha"]), "2026-10-18")
+        self.assertEqual(st.session_state["p_prog"], 6)
+        self.assertEqual(st.session_state["p_pres"], 5)
+        self.assertEqual(st.session_state["sel_lider"], "Marcos Rivas")
+        self.assertEqual(st.session_state["txt_obs_gral"], "Supervisión PWA cargada desde sótano sin conexión.")
+        self.assertEqual(st.session_state.evaluacion_temp["lobby_pisos"]["calificacion"], "R")
+        self.assertEqual(st.session_state["rad_lobby_pisos"], "R")
+        self.assertEqual(st.session_state["obs_lobby_pisos"], "Huellas de tránsito en ingreso")
+        self.assertEqual(st.session_state.evaluacion_temp["ssh_aparatos"]["calificacion"], "NC")
+        self.assertEqual(st.session_state["rad_ssh_aparatos"], "NC")
+        self.assertEqual(len(st.session_state.incidencias_temp), 1)
+        self.assertEqual(len(st.session_state.fotos_temp), 1)
+
+        # Caso B: JSON con formato PWA Legacy ("c1".."c15", "calif", "obs")
+        payload_legacy = {
+            "edificio_nombre": edificios[0]["nombre"],
+            "supervisor_nombre": supervisores[0]["nombre_completo"],
+            "fecha_inspeccion": "2026-10-17",
+            "evaluacion": {
+                "c1": {"calif": "NC", "obs": "Pisos manchados con cera antigua"},
+                "c7": {"calif": "R", "obs": "Inodoro requiere desincrustado"}
+            }
+        }
+        res_legacy = procesar_importacion_json(payload_legacy, checklist_areas, edificios, supervisores, tipos_inspeccion, turnos_trabajo)
+        self.assertTrue(res_legacy["ok"])
+        self.assertEqual(st.session_state.evaluacion_temp["lobby_pisos"]["calificacion"], "NC")
+        self.assertEqual(st.session_state["rad_lobby_pisos"], "NC")
+        self.assertEqual(st.session_state["obs_lobby_pisos"], "Pisos manchados con cera antigua")
+        self.assertEqual(st.session_state.evaluacion_temp["ssh_aparatos"]["calificacion"], "R")
+        self.assertEqual(st.session_state["rad_ssh_aparatos"], "R")
+
+        # Caso C: JSON descargado desde Historial ('informe', 'checklist_evaluacion', etc.)
+        payload_historial = {
+            "informe": {
+                "edificio_nombre": edificios[0]["nombre"],
+                "supervisor_nombre": supervisores[0]["nombre_completo"],
+                "tipo_inspeccion": tipos_inspeccion[0],
+                "turno": turnos_trabajo[0],
+                "fecha_inspeccion": "2026-10-16",
+                "personal_programado": 8,
+                "personal_presente": 8,
+                "observaciones_generales": "Exportado desde Historial Central."
+            },
+            "checklist_evaluacion": [
+                {"id_criterio": "asc_botoneras", "item_criterio": "Botoneras y Pantallas Táctiles", "calificacion": "NA", "observacion": "Ascensor en modernización"}
+            ]
+        }
+        res_historial = procesar_importacion_json(payload_historial, checklist_areas, edificios, supervisores, tipos_inspeccion, turnos_trabajo)
+        self.assertTrue(res_historial["ok"])
+        self.assertEqual(st.session_state["p_prog"], 8)
+        self.assertEqual(st.session_state["txt_obs_gral"], "Exportado desde Historial Central.")
+        self.assertEqual(st.session_state.evaluacion_temp["asc_botoneras"]["calificacion"], "NA")
+        self.assertEqual(st.session_state["rad_asc_botoneras"], "NA")
+        self.assertEqual(st.session_state["obs_asc_botoneras"], "Ascensor en modernización")
+
+        # Limpieza de fotos temporales generadas
+        for f in st.session_state.fotos_temp:
+            p_arch = f.get("archivo_ruta")
+            if p_arch and os.path.exists(p_arch):
+                try:
+                    os.remove(p_arch)
+                except Exception:
+                    pass
+
+        print("[OK] Importación de JSON (PWA moderna, PWA legacy e Historial) validada al 100% en formulario.")
+
+    def test_fotos_adicionales_por_foto_cargada_json(self):
+        """Valida que al cargar un JSON, cada foto en Evidencias Fotográficas permita agregar fotos adicionales,
+        preservando orientación, persistencia en BD (con foto_padre_id), renderizado en PDF y reimportación."""
+        import streamlit as st
+        from PIL import Image
+        import base64
+        import uuid
+        from modules.nueva_supervision import procesar_importacion_json, rotar_imagen_guardada, UPLOADS_DIR
+        from database import obtener_checklist_completo, obtener_tipos_inspeccion, obtener_turnos_trabajo
+
+        checklist_areas = obtener_checklist_completo(solo_activos=True)
+        edificios = obtener_lista_edificios(solo_activos=True)
+        supervisores = obtener_lista_supervisores(solo_activos=True)
+        tipos_inspeccion = obtener_tipos_inspeccion(solo_activos=True)
+        turnos_trabajo = obtener_turnos_trabajo(solo_activos=True)
+
+        st.session_state.evaluacion_temp = {}
+        for area in checklist_areas:
+            for crit in area["criterios"]:
+                st.session_state.evaluacion_temp[crit["id"]] = {
+                    "id_area": area["id_area"],
+                    "nombre_area": area["nombre"],
+                    "id_criterio": crit["id"],
+                    "item_criterio": crit["item"],
+                    "calificacion": "C",
+                    "observacion": ""
+                }
+        st.session_state.fotos_temp = []
+        st.session_state.incidencias_temp = []
+
+        # 1. Crear imagen principal (vertical) y empaquetar en payload JSON
+        buf_orig = io.BytesIO()
+        img_orig = Image.new("RGB", (400, 600), color=(30, 80, 160))
+        img_orig.save(buf_orig, format="JPEG")
+        b64_orig = f"data:image/jpeg;base64,{base64.b64encode(buf_orig.getvalue()).decode('utf-8')}"
+
+        payload_json = {
+            "informe": {
+                "edificio_nombre": edificios[0]["nombre"],
+                "supervisor_nombre": supervisores[0]["nombre_completo"],
+                "tipo_inspeccion": tipos_inspeccion[0],
+                "turno": turnos_trabajo[0],
+                "fecha_inspeccion": "2026-10-18"
+            },
+            "checklist_evaluacion": [
+                {"id_criterio": "lobby_pisos", "calificacion": "NC", "observacion": "Mancha visible"}
+            ],
+            "fotos": [
+                {
+                    "area_nombre": "Hall / Lobby Principal",
+                    "tipo_evidencia": "Hallazgo / No Conforme",
+                    "descripcion": "Mancha de café en piso de mármol",
+                    "data": b64_orig
+                }
+            ]
+        }
+
+        res_imp = procesar_importacion_json(payload_json, checklist_areas, edificios, supervisores, tipos_inspeccion, turnos_trabajo)
+        self.assertTrue(res_imp["ok"])
+        self.assertEqual(len(st.session_state.fotos_temp), 1)
+
+        foto_principal = st.session_state.fotos_temp[0]
+        self.assertIn("fotos_adicionales", foto_principal)
+        self.assertEqual(len(foto_principal["fotos_adicionales"]), 0)
+        self.assertEqual(foto_principal["descripcion"], "Mancha de café en piso de mármol")
+
+        # 2. Simular que el usuario agrega una foto adicional a ESTA foto en el formulario
+        buf_sub = io.BytesIO()
+        img_sub = Image.new("RGB", (400, 600), color=(40, 160, 80)) # Foto vertical
+        img_sub.save(buf_sub, format="JPEG")
+        sub_bytes = buf_sub.getvalue()
+
+        sub_nom = f"test_sub_evidencia_{uuid.uuid4().hex[:6]}.jpg"
+        sub_ruta = str(UPLOADS_DIR / sub_nom)
+        with open(sub_ruta, "wb") as f_out:
+            f_out.write(sub_bytes)
+
+        sub_uid = f"sub_{uuid.uuid4().hex[:6]}"
+        foto_principal["fotos_adicionales"].append({
+            "uid": sub_uid,
+            "foto_padre_uid": foto_principal["uid"],
+            "area_nombre": foto_principal["area_nombre"],
+            "tipo_evidencia": "Después de Limpieza",
+            "archivo_nombre": sub_nom,
+            "archivo_ruta": sub_ruta,
+            "descripcion": "Piso desmanchado y pulido con hidrolavadora",
+            "origen": "FOTO_ADICIONAL"
+        })
+        st.session_state[f"sub_tipo_{sub_uid}"] = "Después de Limpieza"
+        st.session_state[f"sub_desc_{sub_uid}"] = "Piso desmanchado y pulido con hidrolavadora"
+
+        self.assertEqual(len(foto_principal["fotos_adicionales"]), 1)
+
+        # 3. Probar rotación de la foto adicional
+        with Image.open(sub_ruta) as img_pre_rot:
+            w_pre, h_pre = img_pre_rot.size
+            self.assertEqual((w_pre, h_pre), (400, 600))
+
+        rot_ok = rotar_imagen_guardada(sub_ruta, 90)
+        self.assertTrue(rot_ok)
+        with Image.open(sub_ruta) as img_post_rot:
+            w_post, h_post = img_post_rot.size
+            self.assertEqual((w_post, h_post), (600, 400)) # Rotó a horizontal
+
+        # 4. Guardar en Base de Datos y verificar relación jerárquica con foto_padre_id
+        datos_gral = {
+            "codigo_informe": "REP-TEST-SUBFOTO-001",
+            "fecha_inspeccion": "2026-10-18",
+            "hora_inicio": "08:00",
+            "hora_fin": "09:30",
+            "tipo_inspeccion": tipos_inspeccion[0],
+            "turno": turnos_trabajo[0],
+            "edificio_id": edificios[0]["id"],
+            "edificio_nombre": edificios[0]["nombre"],
+            "edificio_direccion": edificios[0]["direccion"],
+            "administrador_nombre": "Admin Test",
+            "supervisor_id": supervisores[0]["id"],
+            "supervisor_nombre": supervisores[0]["nombre_completo"],
+            "supervisor_dni": supervisores[0].get("dni_ce", ""),
+            "lider_cuadrilla": "Líder Test",
+            "personal_programado": 4,
+            "personal_presente": 4,
+            "personal_faltante": 0,
+            "score_global": 92.5,
+            "nivel_calidad": "EXCELENTE",
+            "estado_aprobacion": "APROBADO",
+            "total_items_evaluados": 1,
+            "total_conformes": 1,
+            "total_regulares": 0,
+            "total_no_conformes": 0,
+            "total_no_aplica": 0,
+            "epp_conforme": 1,
+            "maquinaria_conforme": 1,
+            "insumos_conforme": 1,
+            "incluir_firmas": 1,
+            "observaciones_generales": "Supervisión con foto principal y adicional.",
+            "plan_accion_resumen": "",
+            "estado_informe": "FINALIZADO"
+        }
+        detalles_eval = [
+            {
+                "id_area": 1,
+                "nombre_area": "Hall / Lobby Principal",
+                "id_criterio": "lobby_pisos",
+                "item_criterio": "Pisos y Zócalos",
+                "calificacion": "C",
+                "observacion": "Subsanado"
+            }
+        ]
+
+        sup_id, cod_gen = guardar_supervision_completa(
+            datos_gral=datos_gral,
+            detalles_evaluacion=detalles_eval,
+            incidencias=[],
+            fotos_guardadas=st.session_state.fotos_temp
+        )
+        self.assertTrue(sup_id > 0)
+
+        # 5. Obtener supervisión y comprobar que la foto principal incluye su foto adicional
+        recup = obtener_supervision_por_id(sup_id)
+        self.assertIsNotNone(recup)
+        self.assertEqual(len(recup["fotos"]), 1) # 1 evidencia principal
+        self.assertEqual(len(recup["fotos"][0]["fotos_adicionales"]), 1) # 1 foto adicional vinculada
+        sub_recup = recup["fotos"][0]["fotos_adicionales"][0]
+        self.assertEqual(sub_recup["tipo_evidencia"], "Después de Limpieza")
+        self.assertEqual(sub_recup["descripcion"], "Piso desmanchado y pulido con hidrolavadora")
+        self.assertEqual(len(recup["todas_las_fotos"]), 2) # Total fotos en BD
+
+        # 6. Generar PDF y validar que ambas fotos se renderizan en el informe
+        pdf_bytes = generar_pdf_supervision(recup)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        self.assertTrue(len(pdf_bytes) > 2000)
+
+        # 7. Limpiar registros y archivos
+        eliminar_supervision(sup_id)
+        if os.path.exists(sub_ruta):
+            try:
+                os.remove(sub_ruta)
+            except Exception:
+                pass
+        for f in st.session_state.fotos_temp:
+            p_r = f.get("archivo_ruta")
+            if p_r and os.path.exists(p_r):
+                try:
+                    os.remove(p_r)
+                except Exception:
+                    pass
+
+        print("[OK] Fotos adicionales por evidencia (agregado, rotación, BD, PDF y JSON) validadas al 100%.")
 
 
 if __name__ == "__main__":

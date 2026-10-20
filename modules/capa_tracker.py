@@ -11,6 +11,7 @@ from datetime import datetime, date
 from PIL import Image
 
 from config import UPLOADS_DIR
+from modules.nueva_supervision import guardar_y_optimizar_imagen
 from database import (
     obtener_todas_incidencias, actualizar_estado_incidencia,
     obtener_lista_edificios, obtener_lista_supervisores
@@ -164,8 +165,7 @@ def render_modulo_capa():
                     if foto_sub_file:
                         nom_archivo = f"subsanacion_{inc['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                         ruta_dest = UPLOADS_DIR / nom_archivo
-                        with open(ruta_dest, "wb") as f_out:
-                            f_out.write(foto_sub_file.getbuffer())
+                        guardar_y_optimizar_imagen(foto_sub_file.getvalue(), str(ruta_dest))
                         ruta_guardada = str(ruta_dest)
 
                     actualizar_estado_incidencia(

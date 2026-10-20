@@ -677,6 +677,149 @@ body {
 .color-blue { background: #E0F2FE; color: #0369A1; border-left: 4px solid #0284C7; }
 .color-green { background: #D1FAE5; color: #065F46; border-left: 4px solid #10B981; }
 
+/* 📸 Registro Fotográfico de Evidencias */
+.empty-fotos-notice {
+    text-align: center;
+    padding: 32px 16px;
+    background: #F8FAFC;
+    border: 2px dashed #CBD5E1;
+    border-radius: var(--radius-md);
+    color: #64748B;
+}
+
+.empty-fotos-notice p {
+    font-size: 1rem;
+    color: #334155;
+    margin-bottom: 4px;
+}
+
+.fotos-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+    margin-top: 12px;
+}
+
+.foto-card {
+    background: #FFFFFF;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.foto-card:hover {
+    box-shadow: var(--shadow-lg);
+}
+
+.foto-preview-container {
+    height: 250px;
+    background: #0F172A;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.foto-preview-container img {
+    max-height: 250px;
+    max-width: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    image-orientation: from-image;
+    display: block;
+    transition: transform 0.2s;
+}
+
+.foto-orientation-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    letter-spacing: 0.3px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    z-index: 2;
+}
+
+.badge-vertical {
+    background: #10B981;
+    color: #FFFFFF;
+}
+
+.badge-horizontal {
+    background: #0284C7;
+    color: #FFFFFF;
+}
+
+.foto-dim-badge {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    font-size: 0.7rem;
+    background: rgba(15, 23, 42, 0.75);
+    color: #E2E8F0;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-family: monospace;
+    z-index: 2;
+}
+
+.foto-card-body {
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+}
+
+.foto-card-body label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #475569;
+    margin-bottom: 2px;
+    display: block;
+}
+
+.foto-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 10px;
+    border-top: 1px solid #F1F5F9;
+}
+
+.btn-rotar-foto {
+    flex: 1;
+    color: #0369A1;
+    background: #E0F2FE;
+    font-weight: 600;
+    border: 1px solid #BAE6FD;
+}
+
+.btn-rotar-foto:hover {
+    background: #BAE6FD;
+}
+
+.btn-eliminar-foto {
+    color: #DC2626;
+    background: #FEE2E2;
+    font-weight: 600;
+    border: 1px solid #FECACA;
+}
+
+.btn-eliminar-foto:hover {
+    background: #FECACA;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
     .app-container { flex-direction: column; }
@@ -684,11 +827,12 @@ body {
     .main-content { padding: 20px 16px; }
     .grid-3, .grid-4, .grid-2 { grid-template-columns: 1fr; }
     .score-banner { flex-direction: column; text-align: center; }
+    .fotos-grid { grid-template-columns: 1fr; }
 }
 
 /* Print stylesheet */
 @media print {
-    .sidebar, .top-header, .card-footer, .btn, .quick-actions, #btn-demo-data {
+    .sidebar, .top-header, .card-footer, .btn, .quick-actions, #btn-demo-data, .foto-actions {
         display: none !important;
     }
     .main-content {
@@ -699,5 +843,55 @@ body {
         border: none;
         box-shadow: none;
         margin-bottom: 12px;
+    }
+    #card-fotografico {
+        page-break-before: always;
+        break-before: page;
+        display: block !important;
+    }
+    .empty-fotos-notice {
+        display: none !important;
+    }
+    .fotos-grid {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 16px !important;
+    }
+    .foto-card {
+        border: 1px solid #CBD5E1 !important;
+        box-shadow: none !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        background: #FFFFFF !important;
+        padding: 8px !important;
+        border-radius: 8px !important;
+    }
+    .foto-preview-container {
+        height: 220px !important;
+        background: #F8FAFC !important;
+        border: 1px solid #E2E8F0 !important;
+        border-radius: 6px !important;
+        overflow: hidden !important;
+    }
+    .foto-preview-container img {
+        max-height: 215px !important;
+        max-width: 100% !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+    }
+    .foto-orientation-badge, .foto-dim-badge {
+        display: none !important;
+    }
+    .foto-card-body {
+        padding: 8px 4px 4px 4px !important;
+        font-size: 0.85rem !important;
+    }
+    .foto-card-body select, .foto-card-body input {
+        border: none !important;
+        padding: 2px 0 !important;
+        font-weight: 600 !important;
+        background: transparent !important;
+        color: #1E293B !important;
     }
 }

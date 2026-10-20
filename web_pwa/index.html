@@ -214,6 +214,35 @@
                                 <span class="chip chip-na" id="chip-na">0 N/A</span>
                             </div>
                         </div>
+                    <!-- 4. Registro Fotográfico de Evidencias Técnicas -->
+                    <div class="card" id="card-fotografico">
+                        <div class="card-header">
+                            <div class="header-icon bg-blue"><i data-lucide="camera"></i></div>
+                            <div>
+                                <h3>4. Registro Fotográfico de Evidencias Técnicas</h3>
+                                <p>Capture o cargue fotos conservando automáticamente su orientación original (vertical u horizontal)</p>
+                            </div>
+                            <div class="quick-actions">
+                                <button type="button" class="btn btn-sm btn-primary" id="btn-pwa-camara">
+                                    <i data-lucide="camera"></i> 📷 Tomar Foto
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline" id="btn-pwa-galeria">
+                                    <i data-lucide="image"></i> 📁 Subir de Galería
+                                </button>
+                                <input type="file" id="pwa-input-camara" accept="image/*" capture="environment" style="display:none">
+                                <input type="file" id="pwa-input-galeria" accept="image/*" multiple style="display:none">
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="pwa-fotos-vacio" class="empty-fotos-notice">
+                                <div style="font-size:2rem; margin-bottom:8px;">📸</div>
+                                <p><strong>No hay fotografías adjuntas aún.</strong></p>
+                                <small>Presione "Tomar Foto" o cargue desde galería. Las fotos verticales se mantendrán verticales en pantalla y en el reporte impreso / PDF.</small>
+                            </div>
+                            <div id="pwa-fotos-container" class="fotos-grid" style="display:none;">
+                                <!-- Inyectado dinámicamente con JavaScript -->
+                            </div>
+                        </div>
                     </div>
 
                     <!-- 5. Conclusiones y Firmas -->
@@ -221,7 +250,7 @@
                         <div class="card-header">
                             <div class="header-icon bg-indigo"><i data-lucide="pen-tool"></i></div>
                             <div>
-                                <h3>4. Observaciones Finales y Acta de Conformidad</h3>
+                                <h3>5. Observaciones Finales y Acta de Conformidad</h3>
                                 <p>Cierre de auditoría y firmas de conformidad</p>
                             </div>
                         </div>

@@ -6,7 +6,7 @@ import sqlite3
 import json
 import os
 from datetime import datetime
-from config import DATA_DIR, CHECKLIST_AREAS, TIPOS_INSPECCION, TURNOS_TRABAJO, COMPANY_NAME, FORMAT_CODE, FORMAT_VERSION
+from config import DATA_DIR, CHECKLIST_AREAS, TIPOS_INSPECCION, TURNOS_TRABAJO, COMPANY_NAME, FORMAT_CODE, FORMAT_VERSION, PUNTAJES
 
 DB_PATH = DATA_DIR / "supervision_limpieza.db"
 
@@ -210,6 +210,7 @@ def init_db():
                 archivo_ruta TEXT NOT NULL,
                 descripcion TEXT,
                 origen TEXT DEFAULT 'REGISTRO_FOTOGRAFICO',
+                foto_padre_id TEXT DEFAULT '',
                 FOREIGN KEY (supervision_id) REFERENCES supervisiones (id) ON DELETE CASCADE
             )
         """)
@@ -230,6 +231,12 @@ def init_db():
         # Migración segura: columna origen en supervision_fotos
         try:
             cursor.execute("ALTER TABLE supervision_fotos ADD COLUMN origen TEXT DEFAULT 'REGISTRO_FOTOGRAFICO'")
+        except Exception:
+            pass
+
+        # Migración segura: columna foto_padre_id en supervision_fotos
+        try:
+            cursor.execute("ALTER TABLE supervision_fotos ADD COLUMN foto_padre_id TEXT DEFAULT ''")
         except Exception:
             pass
 
@@ -966,7 +973,7 @@ def guardar_supervision_completa(datos_gral, detalles_evaluacion, incidencias, f
                 d["id_criterio"],
                 d["item_criterio"],
                 d["calificacion"],
-                d["puntos"],
+                d.get("puntos", PUNTAJES.get(d.get("calificacion", "C"), {}).get("puntos", 100)),
                 d.get("observacion", "")
             ))
 
@@ -1002,19 +1009,77 @@ def guardar_supervision_completa(datos_gral, detalles_evaluacion, incidencias, f
                 continue
             rutas_insertadas.add(ruta_norm)
             nom_arch = f.get("archivo_nombre") or os.path.basename(ruta_norm)
-            cursor.execute("""
-                INSERT INTO supervision_fotos (
-                    supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                supervision_id,
-                f.get("area_nombre", "General"),
-                f.get("tipo_evidencia", "Hallazgo / No Conforme"),
-                nom_arch,
-                ruta_norm,
-                f.get("descripcion", ""),
-                f.get("origen", "REGISTRO_FOTOGRAFICO")
-            ))
+            f_padre = str(f.get("foto_padre_id", ""))
+            try:
+                cursor.execute("""
+                    INSERT INTO supervision_fotos (
+                        supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen, foto_padre_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    supervision_id,
+                    f.get("area_nombre", "General"),
+                    f.get("tipo_evidencia", "Hallazgo / No Conforme"),
+                    nom_arch,
+                    ruta_norm,
+                    f.get("descripcion", ""),
+                    f.get("origen", "REGISTRO_FOTOGRAFICO"),
+                    f_padre
+                ))
+            except Exception:
+                cursor.execute("""
+                    INSERT INTO supervision_fotos (
+                        supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    supervision_id,
+                    f.get("area_nombre", "General"),
+                    f.get("tipo_evidencia", "Hallazgo / No Conforme"),
+                    nom_arch,
+                    ruta_norm,
+                    f.get("descripcion", ""),
+                    f.get("origen", "REGISTRO_FOTOGRAFICO")
+                ))
+            foto_id_padre = cursor.lastrowid
+
+            # Insertar fotos adicionales / complementarias asociadas a esta evidencia
+            for sub_f in f.get("fotos_adicionales", []):
+                sub_r = sub_f.get("archivo_ruta", "")
+                if not sub_r:
+                    continue
+                sub_r_norm = os.path.normpath(sub_r)
+                if sub_r_norm in rutas_insertadas:
+                    continue
+                rutas_insertadas.add(sub_r_norm)
+                sub_nom = sub_f.get("archivo_nombre") or os.path.basename(sub_r_norm)
+                try:
+                    cursor.execute("""
+                        INSERT INTO supervision_fotos (
+                            supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen, foto_padre_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        supervision_id,
+                        sub_f.get("area_nombre") or f.get("area_nombre", "General"),
+                        sub_f.get("tipo_evidencia", "Después de Limpieza"),
+                        sub_nom,
+                        sub_r_norm,
+                        sub_f.get("descripcion", ""),
+                        sub_f.get("origen", "FOTO_ADICIONAL"),
+                        str(foto_id_padre)
+                    ))
+                except Exception:
+                    cursor.execute("""
+                        INSERT INTO supervision_fotos (
+                            supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        supervision_id,
+                        sub_f.get("area_nombre") or f.get("area_nombre", "General"),
+                        sub_f.get("tipo_evidencia", "Después de Limpieza"),
+                        sub_nom,
+                        sub_r_norm,
+                        sub_f.get("descripcion", ""),
+                        sub_f.get("origen", "FOTO_ADICIONAL")
+                    ))
 
         conn.commit()
         return supervision_id, datos_gral["codigo_informe"]
@@ -1093,7 +1158,7 @@ def actualizar_supervision_completa(supervision_id: int, datos_gral: dict, detal
                 d["id_criterio"],
                 d["item_criterio"],
                 d["calificacion"],
-                d["puntos"],
+                d.get("puntos", PUNTAJES.get(d.get("calificacion", "C"), {}).get("puntos", 100)),
                 d.get("observacion", "")
             ))
 
@@ -1132,19 +1197,77 @@ def actualizar_supervision_completa(supervision_id: int, datos_gral: dict, detal
                     continue
                 rutas_insertadas.add(ruta_norm)
                 nom_arch = f.get("archivo_nombre") or os.path.basename(ruta_norm)
-                cursor.execute("""
-                    INSERT INTO supervision_fotos (
-                        supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    supervision_id,
-                    f.get("area_nombre", "General"),
-                    f.get("tipo_evidencia", "Hallazgo / No Conforme"),
-                    nom_arch,
-                    ruta_norm,
-                    f.get("descripcion", ""),
-                    f.get("origen", "REGISTRO_FOTOGRAFICO")
-                ))
+                f_padre = str(f.get("foto_padre_id", ""))
+                try:
+                    cursor.execute("""
+                        INSERT INTO supervision_fotos (
+                            supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen, foto_padre_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        supervision_id,
+                        f.get("area_nombre", "General"),
+                        f.get("tipo_evidencia", "Hallazgo / No Conforme"),
+                        nom_arch,
+                        ruta_norm,
+                        f.get("descripcion", ""),
+                        f.get("origen", "REGISTRO_FOTOGRAFICO"),
+                        f_padre
+                    ))
+                except Exception:
+                    cursor.execute("""
+                        INSERT INTO supervision_fotos (
+                            supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        supervision_id,
+                        f.get("area_nombre", "General"),
+                        f.get("tipo_evidencia", "Hallazgo / No Conforme"),
+                        nom_arch,
+                        ruta_norm,
+                        f.get("descripcion", ""),
+                        f.get("origen", "REGISTRO_FOTOGRAFICO")
+                    ))
+                foto_id_padre = cursor.lastrowid
+
+                # Insertar fotos adicionales / complementarias asociadas a esta evidencia
+                for sub_f in f.get("fotos_adicionales", []):
+                    sub_r = sub_f.get("archivo_ruta", "")
+                    if not sub_r:
+                        continue
+                    sub_r_norm = os.path.normpath(sub_r)
+                    if sub_r_norm in rutas_insertadas:
+                        continue
+                    rutas_insertadas.add(sub_r_norm)
+                    sub_nom = sub_f.get("archivo_nombre") or os.path.basename(sub_r_norm)
+                    try:
+                        cursor.execute("""
+                            INSERT INTO supervision_fotos (
+                                supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen, foto_padre_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            supervision_id,
+                            sub_f.get("area_nombre") or f.get("area_nombre", "General"),
+                            sub_f.get("tipo_evidencia", "Después de Limpieza"),
+                            sub_nom,
+                            sub_r_norm,
+                            sub_f.get("descripcion", ""),
+                            sub_f.get("origen", "FOTO_ADICIONAL"),
+                            str(foto_id_padre)
+                        ))
+                    except Exception:
+                        cursor.execute("""
+                            INSERT INTO supervision_fotos (
+                                supervision_id, area_nombre, tipo_evidencia, archivo_nombre, archivo_ruta, descripcion, origen
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            supervision_id,
+                            sub_f.get("area_nombre") or f.get("area_nombre", "General"),
+                            sub_f.get("tipo_evidencia", "Después de Limpieza"),
+                            sub_nom,
+                            sub_r_norm,
+                            sub_f.get("descripcion", ""),
+                            sub_f.get("origen", "FOTO_ADICIONAL")
+                        ))
 
         conn.commit()
         return True
@@ -1196,13 +1319,35 @@ def obtener_supervision_por_id(supervision_id: int):
         incidencias = [dict(r) for r in cursor.fetchall()]
 
         cursor.execute("SELECT * FROM supervision_fotos WHERE supervision_id = ?", (supervision_id,))
-        fotos = [dict(r) for r in cursor.fetchall()]
+        todas_fotos_db = [dict(r) for r in cursor.fetchall()]
+
+        # Reconstruir estructura: fotos principales y sus fotos adicionales vinculadas
+        fotos_principales = []
+        fotos_por_id = {}
+        sub_fotos_pendientes = []
+        for r_f in todas_fotos_db:
+            padre_id = str(r_f.get("foto_padre_id") or "").strip()
+            if not padre_id:
+                r_f["fotos_adicionales"] = []
+                fotos_principales.append(r_f)
+                fotos_por_id[str(r_f.get("id"))] = r_f
+            else:
+                sub_fotos_pendientes.append(r_f)
+
+        for sub_r in sub_fotos_pendientes:
+            padre_ref = str(sub_r.get("foto_padre_id", "")).strip()
+            if padre_ref in fotos_por_id:
+                fotos_por_id[padre_ref]["fotos_adicionales"].append(sub_r)
+            else:
+                sub_r["fotos_adicionales"] = []
+                fotos_principales.append(sub_r)
 
         return {
             "cabecera": cabecera,
             "detalles": detalles,
             "incidencias": incidencias,
-            "fotos": fotos
+            "fotos": fotos_principales,
+            "todas_las_fotos": todas_fotos_db
         }
 
 

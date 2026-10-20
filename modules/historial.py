@@ -20,7 +20,8 @@ from database import (
     actualizar_supervision_completa, eliminar_supervision,
     obtener_checklist_completo
 )
-from modules.nueva_supervision import guardar_y_optimizar_imagen
+from PIL import Image
+from modules.nueva_supervision import guardar_y_optimizar_imagen, rotar_imagen_guardada
 from modules.reportes_pdf import generar_pdf_supervision
 
 
@@ -472,15 +473,24 @@ def render_historial_supervisiones():
                                     idx_t = tipos_evidencia_cat.index(curr_t)
 
                                     with st.container():
-                                        col_f_img, col_f_meta, col_f_del = st.columns([1.2, 2.5, 0.7])
+                                        col_f_img, col_f_meta, col_f_del = st.columns([1.3, 2.5, 0.8])
                                         with col_f_img:
                                             if f_ruta and os.path.exists(f_ruta):
                                                 st.image(f_ruta, use_container_width=True)
+                                                try:
+                                                    with Image.open(f_ruta) as t_img:
+                                                        es_v = t_img.size[1] > t_img.size[0]
+                                                        tag_orient = "📱 Vertical" if es_v else "💻 Horizontal"
+                                                        st.caption(f"Posición: **{tag_orient}** ({t_img.size[0]}x{t_img.size[1]})")
+                                                except Exception:
+                                                    pass
                                             else:
                                                 st.caption("⚠️ Imagen no encontrada en disco")
                                             
                                             if f_origen == "CAPA":
                                                 st.markdown('<span style="background:#FEE2E2;color:#991B1B;font-weight:700;font-size:0.75rem;padding:3px 8px;border-radius:12px;border:1px solid #F87171;display:inline-block;">⚠️ Origen: Incidencia / CAPA</span>', unsafe_allow_html=True)
+                                            elif f_origen == "PWA_OFFLINE":
+                                                st.markdown('<span style="background:#DCFCE7;color:#15803D;font-weight:700;font-size:0.75rem;padding:3px 8px;border-radius:12px;border:1px solid #86EFAC;display:inline-block;">📲 Origen: App Móvil PWA</span>', unsafe_allow_html=True)
                                             else:
                                                 st.markdown('<span style="background:#E0F2FE;color:#075985;font-weight:700;font-size:0.75rem;padding:3px 8px;border-radius:12px;border:1px solid #7DD3FC;display:inline-block;">📸 Origen: Evidencia de Calidad</span>', unsafe_allow_html=True)
 
@@ -505,6 +515,10 @@ def render_historial_supervisiones():
 
                                         with col_f_del:
                                             st.markdown("<br>", unsafe_allow_html=True)
+                                            if f_ruta and os.path.exists(f_ruta):
+                                                if st.button("🔄 Rotar 90°", key=f"e_f_rot_{sup_id}_{f_idx}", help="Rotar esta foto 90° en sentido horario"):
+                                                    if rotar_imagen_guardada(f_ruta, 90):
+                                                        st.rerun()
                                             st.checkbox(
                                                 "🗑️ Quitar foto",
                                                 key=f"e_f_del_{sup_id}_{f_idx}",
