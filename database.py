@@ -142,6 +142,7 @@ def init_db():
                 estado_aprobacion TEXT NOT NULL,
                 total_items_evaluados INTEGER DEFAULT 0,
                 total_conformes INTEGER DEFAULT 0,
+                total_adecuados INTEGER DEFAULT 0,
                 total_regulares INTEGER DEFAULT 0,
                 total_no_conformes INTEGER DEFAULT 0,
                 total_no_aplica INTEGER DEFAULT 0,
@@ -160,9 +161,14 @@ def init_db():
             )
         """)
 
-        # Migración segura: agregar columna incluir_firmas si la tabla supervisiones ya existía sin ella
+        # Migración segura: agregar columnas si no existen
         try:
             cursor.execute("ALTER TABLE supervisiones ADD COLUMN incluir_firmas INTEGER DEFAULT 1")
+        except Exception:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE supervisiones ADD COLUMN total_adecuados INTEGER DEFAULT 0")
         except Exception:
             pass
 
@@ -913,12 +919,12 @@ def guardar_supervision_completa(datos_gral, detalles_evaluacion, incidencias, f
                 supervisor_id, supervisor_nombre, supervisor_dni, lider_cuadrilla,
                 personal_programado, personal_presente, personal_faltante,
                 score_global, nivel_calidad, estado_aprobacion,
-                total_items_evaluados, total_conformes, total_regulares, total_no_conformes, total_no_aplica,
+                total_items_evaluados, total_conformes, total_adecuados, total_regulares, total_no_conformes, total_no_aplica,
                 epp_conforme, maquinaria_conforme, insumos_conforme, incluir_firmas,
                 observaciones_generales, plan_accion_resumen,
                 firma_supervisor_data, firma_cliente_data,
                 firmante_cliente_nombre, firmante_cliente_cargo, creado_en, estado_informe
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             datos_gral["codigo_informe"],
             datos_gral["fecha_inspeccion"],
@@ -942,6 +948,7 @@ def guardar_supervision_completa(datos_gral, detalles_evaluacion, incidencias, f
             datos_gral["estado_aprobacion"],
             datos_gral.get("total_items_evaluados", 0),
             datos_gral.get("total_conformes", 0),
+            datos_gral.get("total_adecuados", 0),
             datos_gral.get("total_regulares", 0),
             datos_gral.get("total_no_conformes", 0),
             datos_gral.get("total_no_aplica", 0),
@@ -1101,7 +1108,7 @@ def actualizar_supervision_completa(supervision_id: int, datos_gral: dict, detal
                 supervisor_id = ?, supervisor_nombre = ?, supervisor_dni = ?, lider_cuadrilla = ?,
                 personal_programado = ?, personal_presente = ?, personal_faltante = ?,
                 score_global = ?, nivel_calidad = ?, estado_aprobacion = ?,
-                total_items_evaluados = ?, total_conformes = ?, total_regulares = ?, total_no_conformes = ?, total_no_aplica = ?,
+                total_items_evaluados = ?, total_conformes = ?, total_adecuados = ?, total_regulares = ?, total_no_conformes = ?, total_no_aplica = ?,
                 epp_conforme = ?, maquinaria_conforme = ?, insumos_conforme = ?, incluir_firmas = ?,
                 observaciones_generales = ?, plan_accion_resumen = ?,
                 firmante_cliente_nombre = ?, firmante_cliente_cargo = ?,
@@ -1129,6 +1136,7 @@ def actualizar_supervision_completa(supervision_id: int, datos_gral: dict, detal
             datos_gral["estado_aprobacion"],
             datos_gral.get("total_items_evaluados", 0),
             datos_gral.get("total_conformes", 0),
+            datos_gral.get("total_adecuados", 0),
             datos_gral.get("total_regulares", 0),
             datos_gral.get("total_no_conformes", 0),
             datos_gral.get("total_no_aplica", 0),

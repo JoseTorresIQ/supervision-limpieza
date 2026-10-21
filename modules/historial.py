@@ -181,6 +181,7 @@ def render_historial_supervisiones():
                     "Supervisor": s.get("supervisor_nombre", ""),
                     "Dotación": f"{s.get('personal_presente', 0)}/{s.get('personal_programado', 0)}",
                     "🟢 C": s.get("total_conformes", 0),
+                    "🔵 AD": s.get("total_adecuados", 0),
                     "🟡 R": s.get("total_regulares", 0),
                     "🔴 NC": s.get("total_no_conformes", 0),
                     "⚪ NA": s.get("total_no_aplica", 0),
@@ -309,6 +310,7 @@ def render_historial_supervisiones():
 
                 # Resumen de detalles directamente visibles
                 c_c = sup.get('total_conformes', 0)
+                c_ad = sup.get('total_adecuados', 0)
                 c_r = sup.get('total_regulares', 0)
                 c_nc = sup.get('total_no_conformes', 0)
                 c_na = sup.get('total_no_aplica', 0)
@@ -319,6 +321,7 @@ def render_historial_supervisiones():
                 st.markdown(f"""
                     <div class="summary-pill-container">
                         <span class="summary-pill pill-c-badge">🟢 Conformes: {c_c}</span>
+                        <span class="summary-pill" style="background:#E0F2FE; color:#0369A1; border:1px solid #BAE6FD; padding:3px 10px; border-radius:12px; font-weight:600; font-size:0.8rem;">🔵 Adecuados: {c_ad}</span>
                         <span class="summary-pill pill-r-badge">🟡 Regulares: {c_r}</span>
                         <span class="summary-pill pill-nc-badge">🔴 No Conformes: {c_nc}</span>
                         <span class="summary-pill pill-na-badge">⚪ N.A.: {c_na}</span>
@@ -409,7 +412,7 @@ def render_historial_supervisiones():
                                     with col_c1:
                                         st.caption(f"• **{crit['item_criterio']}**")
                                     with col_c2:
-                                        opcs = ["C", "R", "NC", "NA"]
+                                        opcs = ["C", "AD", "R", "NC", "NA"]
                                         idx_cur = opcs.index(crit["calificacion"]) if crit["calificacion"] in opcs else 0
                                         cal_sel = st.radio(f"C_{cid}_{sup_id}", opcs, index=idx_cur, horizontal=True, key=f"rad_e_{cid}_{sup_id}", label_visibility="collapsed")
                                     with col_c3:
@@ -552,6 +555,7 @@ def render_historial_supervisiones():
                                     nueva_calidad = clasificar_calidad(nuevo_score)
 
                                     conteo_c = sum(1 for d in nuevos_detalles if d["calificacion"] == "C")
+                                    conteo_ad = sum(1 for d in nuevos_detalles if d["calificacion"] in ["AD", "A"])
                                     conteo_r = sum(1 for d in nuevos_detalles if d["calificacion"] == "R")
                                     conteo_nc = sum(1 for d in nuevos_detalles if d["calificacion"] == "NC")
                                     conteo_na = sum(1 for d in nuevos_detalles if d["calificacion"] == "NA")
@@ -580,6 +584,7 @@ def render_historial_supervisiones():
                                         "estado_aprobacion": nueva_calidad["estado"],
                                         "total_items_evaluados": len(nuevos_detalles),
                                         "total_conformes": conteo_c,
+                                        "total_adecuados": conteo_ad,
                                         "total_regulares": conteo_r,
                                         "total_no_conformes": conteo_nc,
                                         "total_no_aplica": conteo_na,

@@ -784,7 +784,7 @@ def render_formulario_nueva_supervision():
     # -------------------------------------------------------------
     with tab2:
         st.markdown("### 🔍 Checklist de Inspección por Zonas del Inmueble")
-        st.caption("Evalúe cada elemento: **C (Conforme 100 pts)** | **R (Regular 60 pts)** | **NC (No Conforme 0 pts)** | **NA (No Aplica)**")
+        st.caption("Evalúe cada elemento: **C (Conforme 100 pts)** | **AD (Adecuado 80 pts)** | **R (Regular 60 pts)** | **NC (No Conforme 0 pts)** | **NA (No Aplica)**")
 
         # Botones rápidos para marcar todo
         col_btn1, col_btn2, _ = st.columns([1.5, 1.5, 3])
@@ -806,13 +806,17 @@ def render_formulario_nueva_supervision():
             # Calcular score del área en tiempo real
             pts_area = 0.0
             posibles_area = 0.0
-            a_c, a_r, a_nc, a_na = 0, 0, 0, 0
+            a_c, a_ad, a_r, a_nc, a_na = 0, 0, 0, 0, 0
             for crit in area["criterios"]:
                 cid = crit["id"]
                 val = st.session_state.get(f"rad_{cid}", st.session_state.evaluacion_temp.get(cid, {}).get("calificacion", "C"))
                 if val == "C":
                     a_c += 1
                     pts_area += 100
+                    posibles_area += 100
+                elif val in ["AD", "A"]:
+                    a_ad += 1
+                    pts_area += 80
                     posibles_area += 100
                 elif val == "R":
                     a_r += 1
@@ -829,13 +833,13 @@ def render_formulario_nueva_supervision():
                 score_area = (pts_area / posibles_area * 100.0)
                 cal_info_area = clasificar_calidad(score_area)
                 titulo_expander = f"{area['icono']} {area['nombre']} — 🎯 {score_area:.1f}% ({cal_info_area['nivel']})"
-                desempeno_html = f"**Desempeño de Zona:** <span style='color:{cal_info_area['color']}; font-weight:800; font-size:1.05rem;'>{score_area:.1f}% ({cal_info_area['nivel']})</span> &nbsp;•&nbsp; 🟢 C: {a_c} | 🟡 R: {a_r} | 🔴 NC: {a_nc} | ⚪ NA: {a_na}"
+                desempeno_html = f"**Desempeño de Zona:** <span style='color:{cal_info_area['color']}; font-weight:800; font-size:1.05rem;'>{score_area:.1f}% ({cal_info_area['nivel']})</span> &nbsp;•&nbsp; 🟢 C: {a_c} | 🔵 AD: {a_ad} | 🟡 R: {a_r} | 🔴 NC: {a_nc} | ⚪ NA: {a_na}"
                 progreso_val = score_area / 100.0
             else:
                 score_area = None
                 cal_info_area = {"nivel": "N.A.", "color": "#64748B", "estado": "No Aplica"}
                 titulo_expander = f"{area['icono']} {area['nombre']} — ⚪ N.A. (No Aplica)"
-                desempeno_html = f"**Desempeño de Zona:** <span style='color:#64748B; font-weight:800; font-size:1.05rem;'>N.A. (No Aplica)</span> &nbsp;•&nbsp; 🟢 C: 0 | 🟡 R: 0 | 🔴 NC: 0 | ⚪ NA: {a_na}"
+                desempeno_html = f"**Desempeño de Zona:** <span style='color:#64748B; font-weight:800; font-size:1.05rem;'>N.A. (No Aplica)</span> &nbsp;•&nbsp; 🟢 C: 0 | 🔵 AD: 0 | 🟡 R: 0 | 🔴 NC: 0 | ⚪ NA: {a_na}"
                 progreso_val = 0.0
 
             with st.expander(titulo_expander, expanded=True):
@@ -859,7 +863,7 @@ def render_formulario_nueva_supervision():
                         st.markdown(f"**{crit['item']}**")
                         st.caption(crit["descripcion"])
                     with c_col2:
-                        opciones_calif = ["C", "R", "NC", "NA"]
+                        opciones_calif = ["C", "AD", "R", "NC", "NA"]
                         nueva_calif = st.radio(
                             f"Calif-{cid}",
                             options=opciones_calif,
@@ -1394,6 +1398,7 @@ def render_formulario_nueva_supervision():
         total_puntos = 0.0
         puntos_posibles = 0.0
         conteo_c = 0
+        conteo_ad = 0
         conteo_r = 0
         conteo_nc = 0
         conteo_na = 0
@@ -1401,7 +1406,7 @@ def render_formulario_nueva_supervision():
         detalles_lista = []
         for k, v in st.session_state.evaluacion_temp.items():
             cal = v["calificacion"]
-            pts = PUNTAJES[cal]["puntos"]
+            pts = PUNTAJES.get(cal, {}).get("puntos", 0) if cal in PUNTAJES else 0
             detalles_lista.append({
                 "id_area": v["id_area"],
                 "nombre_area": v["nombre_area"],
@@ -1414,6 +1419,10 @@ def render_formulario_nueva_supervision():
 
             if cal == "C":
                 conteo_c += 1
+                total_puntos += pts
+                puntos_posibles += 100
+            elif cal in ["AD", "A"]:
+                conteo_ad += 1
                 total_puntos += pts
                 puntos_posibles += 100
             elif cal == "R":
@@ -1459,11 +1468,12 @@ def render_formulario_nueva_supervision():
             st.markdown(f"**Evaluación:** {calidad_info['descripcion']}")
             st.progress(score_prog)
             
-            c_k1, c_k2, c_k3, c_k4 = st.columns(4)
+            c_k1, c_k2, c_k3, c_k4, c_k5 = st.columns(5)
             c_k1.metric("🟢 Conformes", f"{conteo_c}")
-            c_k2.metric("🟡 Regulares", f"{conteo_r}")
-            c_k3.metric("🔴 No Conformes", f"{conteo_nc}")
-            c_k4.metric("⚪ No Aplica", f"{conteo_na}")
+            c_k2.metric("🔵 Adecuados", f"{conteo_ad}")
+            c_k3.metric("🟡 Regulares", f"{conteo_r}")
+            c_k4.metric("🔴 No Conformes", f"{conteo_nc}")
+            c_k5.metric("⚪ No Aplica", f"{conteo_na}")
 
         # Tabla resumen de desempeño por zona en tiempo real
         st.markdown("---")
@@ -1472,13 +1482,17 @@ def render_formulario_nueva_supervision():
         for area in checklist_areas:
             a_pts = 0.0
             a_pos = 0.0
-            a_c, a_r, a_nc, a_na = 0, 0, 0, 0
+            a_c, a_ad, a_r, a_nc, a_na = 0, 0, 0, 0, 0
             for crit in area["criterios"]:
                 cid = crit["id"]
                 v_cal = st.session_state.evaluacion_temp.get(cid, {}).get("calificacion", "C")
                 if v_cal == "C":
                     a_c += 1
                     a_pts += 100
+                    a_pos += 100
+                elif v_cal in ["AD", "A"]:
+                    a_ad += 1
+                    a_pts += 80
                     a_pos += 100
                 elif v_cal == "R":
                     a_r += 1
@@ -1505,6 +1519,7 @@ def render_formulario_nueva_supervision():
             filas_resumen.append({
                 "Zona / Área": f"{area['icono']} {area['nombre']}",
                 "🟢 C": a_c,
+                "🔵 AD": a_ad,
                 "🟡 R": a_r,
                 "🔴 NC": a_nc,
                 "⚪ NA": a_na,
@@ -1687,6 +1702,7 @@ def render_formulario_nueva_supervision():
                     "estado_aprobacion": calidad_info["estado"],
                     "total_items_evaluados": len(detalles_lista),
                     "total_conformes": conteo_c,
+                    "total_adecuados": conteo_ad,
                     "total_regulares": conteo_r,
                     "total_no_conformes": conteo_nc,
                     "total_no_aplica": conteo_na,

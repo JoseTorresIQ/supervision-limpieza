@@ -52,28 +52,30 @@ TURNOS_TRABAJO = [
 # Calificaciones y Escalas
 PUNTAJES = {
     "C": {"nombre": "Conforme / Impecable", "puntos": 100, "color": "#10B981", "badge": "🟢 C"},
+    "AD": {"nombre": "Adecuado", "puntos": 80, "color": "#0284C7", "badge": "🔵 AD"},
     "R": {"nombre": "Regular / Obs. Menor", "puntos": 60, "color": "#F59E0B", "badge": "🟡 R"},
     "NC": {"nombre": "No Conforme / Crítico", "puntos": 0, "color": "#EF4444", "badge": "🔴 NC"},
     "NA": {"nombre": "No Aplica en Sede", "puntos": None, "color": "#94A3B8", "badge": "⚪ N/A"}
 }
+PUNTAJES["A"] = PUNTAJES["AD"]
 
 # Niveles de Calidad Global
 def clasificar_calidad(score: float):
-    if score >= 95.0:
+    if score >= 97.0:
         return {
             "nivel": "ÓPTIMO",
             "estado": "APROBADO CON DISTINCIÓN",
             "color": "#10B981",
             "descripcion": "El servicio se encuentra en nivel óptimo de calidad y pulcritud."
         }
-    elif score >= 90.0:
+    elif score >= 92.0:
         return {
             "nivel": "ADECUADO",
             "estado": "APROBADO SATISFACTORIO",
             "color": "#0284C7",
             "descripcion": "El servicio cumple adecuadamente con los estándares de limpieza."
         }
-    elif score >= 85.0:
+    elif score >= 87.0:
         return {
             "nivel": "ACEPTABLE",
             "estado": "APROBADO CON OBSERVACIONES",

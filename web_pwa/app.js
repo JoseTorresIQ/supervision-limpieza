@@ -180,6 +180,7 @@ function renderChecklist() {
                     </div>
                     <div class="criteria-radios" data-cid="${crit.id}">
                         <button type="button" class="radio-btn selected-c" data-val="C">C</button>
+                        <button type="button" class="radio-btn" data-val="AD">AD</button>
                         <button type="button" class="radio-btn" data-val="R">R</button>
                         <button type="button" class="radio-btn" data-val="NC">NC</button>
                         <button type="button" class="radio-btn" data-val="NA">N/A</button>
@@ -240,6 +241,7 @@ function actualizarCalculoEnVivo() {
     let totalPuntos = 0;
     let puntosPosibles = 0;
     let countC = 0;
+    let countAD = 0;
     let countR = 0;
     let countNC = 0;
     let countNA = 0;
@@ -249,6 +251,10 @@ function actualizarCalculoEnVivo() {
             totalPuntos += 100;
             puntosPosibles += 100;
             countC++;
+        } else if (item.calif === "AD" || item.calif === "A") {
+            totalPuntos += 80;
+            puntosPosibles += 100;
+            countAD++;
         } else if (item.calif === "R") {
             totalPuntos += 60;
             puntosPosibles += 100;
@@ -271,13 +277,13 @@ function actualizarCalculoEnVivo() {
 
     if (scoreValEl) scoreValEl.innerText = `${score.toFixed(1)}%`;
 
-    if (score >= 95) {
+    if (score >= 97) {
         if (scoreLvlEl) scoreLvlEl.innerText = "ÓPTIMO";
         if (scoreDescEl) scoreDescEl.innerText = "El servicio se encuentra en nivel óptimo de calidad y pulcritud.";
-    } else if (score >= 90) {
+    } else if (score >= 92) {
         if (scoreLvlEl) scoreLvlEl.innerText = "ADECUADO";
         if (scoreDescEl) scoreDescEl.innerText = "El servicio cumple adecuadamente con los estándares de limpieza.";
-    } else if (score >= 85) {
+    } else if (score >= 87) {
         if (scoreLvlEl) scoreLvlEl.innerText = "ACEPTABLE";
         if (scoreDescEl) scoreDescEl.innerText = "Cumplimiento aceptable con oportunidades menores de mejora.";
     } else if (score >= 80) {
@@ -288,10 +294,16 @@ function actualizarCalculoEnVivo() {
         if (scoreDescEl) scoreDescEl.innerText = "No cumple con los estándares mínimos requeridos. Requiere intervención inmediata.";
     }
 
-    document.getElementById("chip-c").innerText = `${countC} Conformes`;
-    document.getElementById("chip-r").innerText = `${countR} Regulares`;
-    document.getElementById("chip-nc").innerText = `${countNC} No Conformes`;
-    document.getElementById("chip-na").innerText = `${countNA} N/A`;
+    const chipCEl = document.getElementById("chip-c");
+    if (chipCEl) chipCEl.innerText = `${countC} Conformes`;
+    const chipAdEl = document.getElementById("chip-ad");
+    if (chipAdEl) chipAdEl.innerText = `${countAD} Adecuados`;
+    const chipREl = document.getElementById("chip-r");
+    if (chipREl) chipREl.innerText = `${countR} Regulares`;
+    const chipNcEl = document.getElementById("chip-nc");
+    if (chipNcEl) chipNcEl.innerText = `${countNC} No Conformes`;
+    const chipNaEl = document.getElementById("chip-na");
+    if (chipNaEl) chipNaEl.innerText = `${countNA} N/A`;
 }
 
 function setupNavigation() {

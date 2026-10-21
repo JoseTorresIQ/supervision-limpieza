@@ -147,6 +147,7 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
         textColor=colors.HexColor("#0F172A")
     )
     badge_c = ParagraphStyle('BadgeC', parent=body_bold, textColor=colors.HexColor("#047857"), alignment=1)
+    badge_ad = ParagraphStyle('BadgeAD', parent=body_bold, textColor=colors.HexColor("#0284C7"), alignment=1)
     badge_r = ParagraphStyle('BadgeR', parent=body_bold, textColor=colors.HexColor("#B45309"), alignment=1)
     badge_nc = ParagraphStyle('BadgeNC', parent=body_bold, textColor=colors.HexColor("#B91C1C"), alignment=1)
     badge_na = ParagraphStyle('BadgeNA', parent=body_bold, textColor=colors.HexColor("#64748B"), alignment=1)
@@ -255,6 +256,7 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
             <font size=7.5 color='#475569'>{calidad_info['descripcion']}</font><br/>
             <font size=7.5>
             <b>Ítems Conformes (C):</b> {cabecera.get('total_conformes', 0)} &nbsp;|&nbsp; 
+            <b>Adecuados (AD):</b> {cabecera.get('total_adecuados', 0)} &nbsp;|&nbsp; 
             <b>Regulares (R):</b> {cabecera.get('total_regulares', 0)} &nbsp;|&nbsp; 
             <b>No Conformes (NC):</b> <font color='#EF4444'><b>{cabecera.get('total_no_conformes', 0)}</b></font> &nbsp;|&nbsp; 
             <b>No Aplica (NA):</b> {cabecera.get('total_no_aplica', 0)}
@@ -290,6 +292,7 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
         [
             Paragraph("<b>Zona / Área Auditada</b>", th_style),
             Paragraph("<b>C</b>", th_center),
+            Paragraph("<b>AD</b>", th_center),
             Paragraph("<b>R</b>", th_center),
             Paragraph("<b>NC</b>", th_center),
             Paragraph("<b>NA</b>", th_center),
@@ -301,11 +304,12 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
     area_scores_calc = {}
     for area_nom, items in areas_dict.items():
         a_c = sum(1 for it in items if it["calificacion"] == "C")
+        a_ad = sum(1 for it in items if it["calificacion"] in ["AD", "A"])
         a_r = sum(1 for it in items if it["calificacion"] == "R")
         a_nc = sum(1 for it in items if it["calificacion"] == "NC")
         a_na = sum(1 for it in items if it["calificacion"] == "NA")
         a_pts = sum(it["puntos"] for it in items if it["puntos"] is not None)
-        a_pos = (a_c + a_r + a_nc) * 100
+        a_pos = (a_c + a_ad + a_r + a_nc) * 100
         
         if a_pos > 0:
             a_sc = (a_pts / a_pos * 100.0)
@@ -325,6 +329,7 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
         resumen_table_rows.append([
             Paragraph(f"<b>{area_nom}</b>", body_style),
             Paragraph(str(a_c), ParagraphStyle('C1', parent=body_style, alignment=1)),
+            Paragraph(str(a_ad), ParagraphStyle('C_ad', parent=body_style, alignment=1)),
             Paragraph(str(a_r), ParagraphStyle('C2', parent=body_style, alignment=1)),
             Paragraph(nc_display, ParagraphStyle('C3', parent=body_style, alignment=1)),
             Paragraph(str(a_na), ParagraphStyle('C4', parent=body_style, alignment=1)),
@@ -332,7 +337,7 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
             Paragraph(dictamen_display, ParagraphStyle('C6', parent=body_style, alignment=1))
         ])
 
-    resumen_table = Table(resumen_table_rows, colWidths=[2.8*inch, 0.45*inch, 0.45*inch, 0.45*inch, 0.45*inch, 0.9*inch, 1.9*inch])
+    resumen_table = Table(resumen_table_rows, colWidths=[2.6*inch, 0.4*inch, 0.4*inch, 0.4*inch, 0.4*inch, 0.4*inch, 0.9*inch, 1.9*inch])
     resumen_table.setStyle(TableStyle([
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor("#94A3B8")),
         ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
@@ -347,6 +352,8 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
 
     # 5. TABLA DE EVALUACIÓN DETALLADA POR CRITERIOS TÉCNICOS
     story.append(Paragraph("3. EVALUACIÓN DETALLADA POR CRITERIOS TÉCNICOS", section_heading))
+    story.append(Paragraph("<b>Criterios Técnicos:</b> Conforme (C: 100 pts) &nbsp;|&nbsp; Adecuado (AD: 80 pts) &nbsp;|&nbsp; Regular (R: 60 pts) &nbsp;|&nbsp; No Conforme (NC: 0 pts) &nbsp;|&nbsp; No Aplica (NA)", body_style))
+    story.append(Spacer(1, 3))
 
     eval_table_rows = [
         [
@@ -370,11 +377,11 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
         ])
         for it in items:
             calif = it["calificacion"]
-            badge_style = badge_c if calif == "C" else (badge_r if calif == "R" else (badge_nc if calif == "NC" else badge_na))
+            badge_style = badge_c if calif == "C" else (badge_ad if calif in ["AD", "A"] else (badge_r if calif == "R" else (badge_nc if calif == "NC" else badge_na)))
             pts_str = f"{it['puntos']:.0f}" if it['puntos'] is not None else "-"
             obs_str = it.get("observacion", "") or "-"
             
-            calif_texto = "Conforme (C)" if calif == "C" else ("Regular (R)" if calif == "R" else ("No Conforme (NC)" if calif == "NC" else "N/A"))
+            calif_texto = "Conforme (C)" if calif == "C" else ("Adecuado (AD)" if calif in ["AD", "A"] else ("Regular (R)" if calif == "R" else ("No Conforme (NC)" if calif == "NC" else "N/A")))
 
             eval_table_rows.append([
                 Paragraph(f"<b>{it['item_criterio']}</b>", body_style),

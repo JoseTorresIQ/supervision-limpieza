@@ -444,6 +444,7 @@ body {
 }
 
 .radio-btn.selected-c { background-color: #10B981; color: white; border-color: #10B981; }
+.radio-btn.selected-ad { background-color: #0284C7; color: white; border-color: #0284C7; }
 .radio-btn.selected-r { background-color: #F59E0B; color: white; border-color: #F59E0B; }
 .radio-btn.selected-nc { background-color: #EF4444; color: white; border-color: #EF4444; }
 .radio-btn.selected-na { background-color: #94A3B8; color: white; border-color: #94A3B8; }
@@ -550,6 +551,7 @@ body {
 }
 
 .chip-c { background-color: #065F46; color: #D1FAE5; }
+.chip-ad { background-color: #0369A1; color: #E0F2FE; }
 .chip-r { background-color: #92400E; color: #FEF3C7; }
 .chip-nc { background-color: #991B1B; color: #FEE2E2; }
 .chip-na { background-color: #334155; color: #E2E8F0; }

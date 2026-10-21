@@ -114,16 +114,17 @@ def render_dashboard_analitica():
     col_d1, col_d2 = st.columns(2)
 
     with col_d1:
-        st.markdown("### 🎯 Desglose de Evaluaciones (C / R / NC / NA)")
+        st.markdown("### 🎯 Desglose de Evaluaciones (C / AD / R / NC / NA)")
         total_c = df["total_conformes"].sum()
+        total_ad = df["total_adecuados"].sum() if "total_adecuados" in df.columns else 0
         total_r = df["total_regulares"].sum()
         total_nc = df["total_no_conformes"].sum()
         total_na = df["total_no_aplica"].sum()
 
         df_pie = pd.DataFrame({
-            "Estado": ["Conformes (C)", "Regulares (R)", "No Conformes (NC)", "No Aplica (NA)"],
-            "Cantidad": [total_c, total_r, total_nc, total_na],
-            "Color": ["#10B981", "#F59E0B", "#EF4444", "#94A3B8"]
+            "Estado": ["Conformes (C)", "Adecuados (AD)", "Regulares (R)", "No Conformes (NC)", "No Aplica (NA)"],
+            "Cantidad": [total_c, total_ad, total_r, total_nc, total_na],
+            "Color": ["#10B981", "#0284C7", "#F59E0B", "#EF4444", "#94A3B8"]
         })
 
         chart_pie = alt.Chart(df_pie).mark_arc(innerRadius=50).encode(

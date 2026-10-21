@@ -41,8 +41,11 @@ class TestSupervisionLimpieza(unittest.TestCase):
         res_98 = clasificar_calidad(98.0)
         self.assertEqual(res_98["nivel"], "ÓPTIMO")
 
+        res_97 = clasificar_calidad(97.0)
+        self.assertEqual(res_97["nivel"], "ÓPTIMO")
+
         res_95 = clasificar_calidad(95.0)
-        self.assertEqual(res_95["nivel"], "ÓPTIMO")
+        self.assertEqual(res_95["nivel"], "ADECUADO")
 
         res_92 = clasificar_calidad(92.0)
         self.assertEqual(res_92["nivel"], "ADECUADO")
@@ -55,7 +58,15 @@ class TestSupervisionLimpieza(unittest.TestCase):
 
         res_50 = clasificar_calidad(50.0)
         self.assertEqual(res_50["nivel"], "NO CONFORME")
-        print("[OK] Logica de clasificacion de calidad de 5 niveles 100% correcta.")
+
+        # Validar la escala de calificaciones de criterios técnicos
+        self.assertIn("AD", PUNTAJES)
+        self.assertEqual(PUNTAJES["AD"]["puntos"], 80)
+        self.assertEqual(PUNTAJES["C"]["puntos"], 100)
+        self.assertEqual(PUNTAJES["R"]["puntos"], 60)
+        self.assertEqual(PUNTAJES["NC"]["puntos"], 0)
+        self.assertIsNone(PUNTAJES["NA"]["puntos"])
+        print("[OK] Logica de clasificacion de calidad y escala tecnica 100% correcta.")
 
     def test_03_flujo_completo_supervision_y_pdf(self):
         """Crear una supervision completa, guardarla en SQLite y generar el PDF."""
@@ -1545,6 +1556,125 @@ class TestSupervisionLimpieza(unittest.TestCase):
                     pass
 
         print("[OK] Fotos adicionales por evidencia (agregado, rotación, BD, PDF y JSON) validadas al 100%.")
+
+    def test_24_calificacion_adecuado_80_y_nuevos_umbrales(self):
+        """Verificar flujo completo de la nueva calificación Adecuado (AD - 80 pts), nuevos umbrales, BD y PDF."""
+        from modules.reportes_pdf import generar_pdf_supervision
+
+        # 1. Validar clasificación de calidad con nuevos umbrales solicitados:
+        # Optimo => 97
+        self.assertEqual(clasificar_calidad(99.0)["nivel"], "ÓPTIMO")
+        self.assertEqual(clasificar_calidad(97.0)["nivel"], "ÓPTIMO")
+
+        # 92 <= Adecuado < 97
+        self.assertEqual(clasificar_calidad(96.9)["nivel"], "ADECUADO")
+        self.assertEqual(clasificar_calidad(92.0)["nivel"], "ADECUADO")
+
+        # 87 <= Aceptable < 92
+        self.assertEqual(clasificar_calidad(91.9)["nivel"], "ACEPTABLE")
+        self.assertEqual(clasificar_calidad(87.0)["nivel"], "ACEPTABLE")
+
+        # 80 <= Por Mejorar < 87
+        self.assertEqual(clasificar_calidad(86.9)["nivel"], "POR MEJORAR")
+        self.assertEqual(clasificar_calidad(80.0)["nivel"], "POR MEJORAR")
+
+        # No Conforme < 80
+        self.assertEqual(clasificar_calidad(79.9)["nivel"], "NO CONFORME")
+        self.assertEqual(clasificar_calidad(50.0)["nivel"], "NO CONFORME")
+
+        # 2. Guardar supervisión con ítems "AD" (80 pts) y "C" (100 pts)
+        codigo = generar_nuevo_codigo()
+        edificios = obtener_lista_edificios()
+        edif = edificios[0]
+        supervisores = obtener_lista_supervisores()
+        sup = supervisores[0]
+
+        # 2 criterios: 1 C (100 pts) y 1 AD (80 pts) -> 180 / 200 = 90.0% -> ACEPTABLE (87 <= Aceptable < 92)
+        detalles_eval = [
+            {
+                "id_area": "hall_lobby",
+                "nombre_area": "1. Hall de Ingreso / Lobby / Recepción",
+                "id_criterio": "hl_01",
+                "item_criterio": "Pisos, mamparas y vidrios impecables",
+                "calificacion": "C",
+                "puntos": 100,
+                "observacion": "Excelente estado de pulido"
+            },
+            {
+                "id_area": "hall_lobby",
+                "nombre_area": "1. Hall de Ingreso / Lobby / Recepción",
+                "id_criterio": "hl_02",
+                "item_criterio": "Mobiliario y módulos de recepción libres de polvo",
+                "calificacion": "AD",
+                "puntos": 80,
+                "observacion": "Detalle menor en esquina del mostrador"
+            }
+        ]
+
+        score_calc = (100 + 80) / 200 * 100.0 # 90.0%
+        cal_info = clasificar_calidad(score_calc)
+        self.assertEqual(cal_info["nivel"], "ACEPTABLE")
+
+        datos_gral = {
+            "codigo_informe": codigo,
+            "fecha_inspeccion": "2026-10-20",
+            "hora_inicio": "08:00",
+            "hora_fin": "09:30",
+            "tipo_inspeccion": "Supervisión Rutinaria Diaria",
+            "turno": "Turno Mañana (07:00 - 15:00)",
+            "edificio_id": edif["id"],
+            "edificio_nombre": edif["nombre"],
+            "edificio_direccion": edif.get("direccion", "Av. Principal 123"),
+            "administrador_nombre": "Administración Central",
+            "supervisor_id": sup["id"],
+            "supervisor_nombre": sup["nombre_completo"],
+            "supervisor_dni": sup.get("dni_ce", "12345678"),
+            "lider_cuadrilla": "Juan Pérez",
+            "personal_programado": 4,
+            "personal_presente": 4,
+            "personal_faltante": 0,
+            "score_global": score_calc,
+            "nivel_calidad": cal_info["nivel"],
+            "estado_aprobacion": cal_info["estado"],
+            "total_items_evaluados": 2,
+            "total_conformes": 1,
+            "total_adecuados": 1,
+            "total_regulares": 0,
+            "total_no_conformes": 0,
+            "total_no_aplica": 0,
+            "epp_conforme": 1,
+            "maquinaria_conforme": 1,
+            "insumos_conforme": 1,
+            "incluir_firmas": 1,
+            "observaciones_generales": "Supervisión de prueba validando calificación Adecuado (AD - 80 pts).",
+            "plan_accion_resumen": "Sin no conformidades críticas.",
+            "estado_informe": "FINALIZADO"
+        }
+
+        sup_id, cod_gen = guardar_supervision_completa(
+            datos_gral=datos_gral,
+            detalles_evaluacion=detalles_eval,
+            incidencias=[],
+            fotos_guardadas=[]
+        )
+        self.assertTrue(sup_id > 0)
+
+        # 3. Comprobar recuperación desde BD
+        recup = obtener_supervision_por_id(sup_id)
+        self.assertIsNotNone(recup)
+        self.assertEqual(recup["cabecera"].get("total_adecuados"), 1)
+        self.assertEqual(recup["cabecera"].get("total_conformes"), 1)
+        self.assertEqual(recup["cabecera"].get("score_global"), 90.0)
+        self.assertEqual(recup["cabecera"].get("nivel_calidad"), "ACEPTABLE")
+
+        # 4. Generar reporte PDF con sección de Criterios Técnicos y calificación Adecuado
+        pdf_bytes = generar_pdf_supervision(recup)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        self.assertTrue(len(pdf_bytes) > 2000)
+
+        # 5. Limpieza
+        eliminar_supervision(sup_id)
+        print("[OK] Calificación Adecuado (AD - 80 pts), nuevos umbrales, BD y reporte PDF 100% validados.")
 
 
 if __name__ == "__main__":
