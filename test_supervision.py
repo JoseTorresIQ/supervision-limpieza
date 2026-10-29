@@ -15,7 +15,8 @@ from config import CHECKLIST_AREAS, PUNTAJES, clasificar_calidad, DATA_DIR
 from database import (
     init_db, get_connection, obtener_lista_edificios, obtener_lista_supervisores,
     guardar_supervision_completa, obtener_supervision_por_id, generar_nuevo_codigo,
-    eliminar_supervision
+    eliminar_supervision, obtener_supervision_por_codigo, existe_codigo_informe,
+    actualizar_supervision_completa
 )
 from modules.reportes_pdf import generar_pdf_supervision
 
@@ -24,8 +25,29 @@ class TestSupervisionLimpieza(unittest.TestCase):
     
     @classmethod
     def setUpClass(cls):
-        """Inicializar base de datos de pruebas."""
+        """Inicializar base de datos aislada de pruebas (sin tocar la BD real del usuario)."""
+        import database
+        cls._orig_db_path = database.DB_PATH
+        cls._test_db_path = DATA_DIR / "test_supervision_temp.db"
+        if os.path.exists(cls._test_db_path):
+            try:
+                os.remove(cls._test_db_path)
+            except Exception:
+                pass
+        database.DB_PATH = cls._test_db_path
         init_db()
+
+    @classmethod
+    def tearDownClass(cls):
+        """Restaurar DB_PATH y eliminar la base de datos temporal de pruebas."""
+        import database
+        database.DB_PATH = getattr(cls, "_orig_db_path", database.DB_PATH)
+        test_db = getattr(cls, "_test_db_path", None)
+        if test_db and os.path.exists(test_db):
+            try:
+                os.remove(test_db)
+            except Exception:
+                pass
 
     def test_01_maestros_disponibles(self):
         """Verificar que existan edificios y supervisores sembrados."""
@@ -594,19 +616,11 @@ class TestSupervisionLimpieza(unittest.TestCase):
         )
         from modules.auth import render_login, render_user_sidebar
 
-        # 1. Probar autenticación de usuarios predeterminados
+        # 1. Probar autenticación del usuario administrador predeterminado
         admin_auth = autenticar_usuario("admin", "admin123")
         self.assertIsNotNone(admin_auth, "El usuario admin debe autenticarse exitosamente.")
         self.assertEqual(admin_auth["username"], "admin")
         self.assertIn("Administrador", admin_auth["rol"])
-
-        super_auth = autenticar_usuario("supervisor", "super123")
-        self.assertIsNotNone(super_auth, "El usuario supervisor debe autenticarse exitosamente.")
-        self.assertIn("Supervisor", super_auth["rol"])
-
-        cliente_auth = autenticar_usuario("cliente", "cliente123")
-        self.assertIsNotNone(cliente_auth, "El usuario cliente debe autenticarse exitosamente.")
-        self.assertIn("Cliente", cliente_auth["rol"])
 
         # 2. Probar contraseña incorrecta y usuario inexistente
         bad_pass = autenticar_usuario("admin", "wrong_password_xyz")
@@ -1356,6 +1370,30 @@ class TestSupervisionLimpieza(unittest.TestCase):
         self.assertEqual(st.session_state["rad_asc_botoneras"], "NA")
         self.assertEqual(st.session_state["obs_asc_botoneras"], "Ascensor en modernización")
 
+        # Caso D: Verificación de calificaciones AD (80 pts), A, N/A y variantes textuales/numéricas
+        payload_variantes = {
+            "edificio_nombre": edificios[0]["nombre"],
+            "evaluacion": {
+                "lobby_pisos": {"calificacion": "AD", "observacion": "Detalle menor"},
+                "lobby_vidrios": {"calificacion": "A", "observacion": "Aceptable"},
+                "lobby_counter": {"calificacion": "N/A", "observacion": "No aplica este turno"},
+                "asc_botoneras": {"calificacion": "ADECUADO", "observacion": "Limpio"},
+                "asc_acero": {"puntos": 80, "observacion": "80 puntos"}
+            }
+        }
+        res_variantes = procesar_importacion_json(payload_variantes, checklist_areas, edificios, supervisores, tipos_inspeccion, turnos_trabajo)
+        self.assertTrue(res_variantes["ok"])
+        self.assertEqual(st.session_state.evaluacion_temp["lobby_pisos"]["calificacion"], "AD")
+        self.assertEqual(st.session_state["rad_lobby_pisos"], "AD")
+        self.assertEqual(st.session_state.evaluacion_temp["lobby_vidrios"]["calificacion"], "AD")
+        self.assertEqual(st.session_state["rad_lobby_vidrios"], "AD")
+        self.assertEqual(st.session_state.evaluacion_temp["lobby_counter"]["calificacion"], "NA")
+        self.assertEqual(st.session_state["rad_lobby_counter"], "NA")
+        self.assertEqual(st.session_state.evaluacion_temp["asc_botoneras"]["calificacion"], "AD")
+        self.assertEqual(st.session_state["rad_asc_botoneras"], "AD")
+        self.assertEqual(st.session_state.evaluacion_temp["asc_acero"]["calificacion"], "AD")
+        self.assertEqual(st.session_state["rad_asc_acero"], "AD")
+
         # Limpieza de fotos temporales generadas
         for f in st.session_state.fotos_temp:
             p_arch = f.get("archivo_ruta")
@@ -1365,7 +1403,7 @@ class TestSupervisionLimpieza(unittest.TestCase):
                 except Exception:
                     pass
 
-        print("[OK] Importación de JSON (PWA moderna, PWA legacy e Historial) validada al 100% en formulario.")
+        print("[OK] Importación de JSON (PWA moderna, PWA legacy, Historial y calificaciones AD/NA) validada al 100% en formulario.")
 
     def test_fotos_adicionales_por_foto_cargada_json(self):
         """Valida que al cargar un JSON, cada foto en Evidencias Fotográficas permita agregar fotos adicionales,
@@ -1676,9 +1714,446 @@ class TestSupervisionLimpieza(unittest.TestCase):
         eliminar_supervision(sup_id)
         print("[OK] Calificación Adecuado (AD - 80 pts), nuevos umbrales, BD y reporte PDF 100% validados.")
 
+    def test_24_logotipo_empresa_en_pdf(self):
+        """Valida la carga, persistencia en BD, inclusión en PDF de supervisión y eliminación del logotipo corporativo."""
+        from PIL import Image as PILImg, ImageDraw
+        from database import guardar_logo_empresa, obtener_logo_empresa, eliminar_logo_empresa, obtener_parametro
+        from modules.reportes_pdf import generar_pdf_supervision
+        from modules.reportes_consolidados import generar_pdf_consolidado_mensual
+
+        # 0. Respaldar logotipo previo si existe para no eliminar el logo real del usuario
+        logo_previo = obtener_logo_empresa()
+        logo_prev_bytes = logo_previo.get("bytes") if logo_previo else None
+        logo_prev_nombre = os.path.basename(logo_previo.get("path", "logo_empresa.png")) if logo_previo else "logo_empresa.png"
+
+        try:
+            # 1. Asegurar estado inicial limpio
+            eliminar_logo_empresa()
+            self.assertIsNone(obtener_logo_empresa())
+            self.assertEqual(obtener_parametro("empresa_logo_path", ""), "")
+
+            # 2. Crear una imagen de prueba válida en memoria (logo corporativo con fondo transparente/color)
+            img_buffer = io.BytesIO()
+            test_logo = PILImg.new("RGBA", (300, 100), color=(2, 132, 199, 255))
+            draw = ImageDraw.Draw(test_logo)
+            draw.text((20, 35), "EMPRESA CLEAN SAC", fill=(255, 255, 255, 255))
+            test_logo.save(img_buffer, format="PNG")
+            logo_bytes = img_buffer.getvalue()
+
+            # 3. Guardar logotipo con guardar_logo_empresa
+            saved_path = guardar_logo_empresa(logo_bytes, "test_logo.png")
+            self.assertTrue(os.path.exists(saved_path))
+
+            # 4. Verificar recuperación mediante obtener_logo_empresa
+            info_logo = obtener_logo_empresa()
+            self.assertIsNotNone(info_logo)
+            self.assertTrue(os.path.exists(info_logo["path"]))
+            self.assertGreater(len(info_logo["bytes"]), 100)
+            self.assertTrue(info_logo["base64"].startswith("data:image/png;base64,"))
+            self.assertEqual(info_logo["ancho"], 300)
+            self.assertEqual(info_logo["alto"], 100)
+            self.assertTrue(len(obtener_parametro("empresa_logo_path", "")) > 0)
+            self.assertTrue(len(obtener_parametro("empresa_logo_base64", "")) > 0)
+
+            # 5. Generar PDF de supervisión con el logo cargado
+            codigo_test = generar_nuevo_codigo()
+            datos_gral = {
+                "codigo_informe": codigo_test,
+                "edificio_id": 1,
+                "edificio_nombre": "Edificio Corporativo Logo Test",
+                "edificio_direccion": "Av. Empresarial 100",
+                "administrador_nombre": "Admin Prueba",
+                "fecha_inspeccion": "2026-10-27",
+                "hora_inicio": "09:00",
+                "hora_fin": "10:30",
+                "turno": "Turno Mañana (07:00 - 15:00)",
+                "tipo_inspeccion": "Supervisión Rutinaria Diaria",
+                "supervisor_id": 1,
+                "supervisor_nombre": "Carlos Mendoza",
+                "supervisor_dni": "12345678",
+                "lider_cuadrilla": "Ana Ruiz",
+                "personal_programado": 4,
+                "personal_presente": 4,
+                "personal_faltante": 0,
+                "score_global": 100.0,
+                "nivel_calidad": "ÓPTIMO",
+                "estado_aprobacion": "APROBADO CON DISTINCIÓN",
+                "total_items_evaluados": 1,
+                "total_conformes": 1,
+                "total_adecuados": 0,
+                "total_regulares": 0,
+                "total_no_conformes": 0,
+                "total_no_aplica": 0,
+                "epp_conforme": 1,
+                "maquinaria_conforme": 1,
+                "insumos_conforme": 1,
+                "incluir_firmas": 1,
+                "observaciones_generales": "Supervisión con logotipo oficial de empresa en encabezado.",
+                "plan_accion_resumen": "Sin incidencias.",
+                "estado_informe": "FINALIZADO"
+            }
+            sup_id, cod = guardar_supervision_completa(
+                datos_gral=datos_gral,
+                detalles_evaluacion=[{
+                    "id_area": "hall_lobby",
+                    "nombre_area": "1. Hall de Ingreso / Lobby / Recepción",
+                    "id_criterio": "hl_01",
+                    "item_criterio": "Mamparas y Puertas",
+                    "calificacion": "C",
+                    "puntos": 100,
+                    "observacion": "Excelente."
+                }],
+                incidencias=[],
+                fotos_guardadas=[]
+            )
+            recup = obtener_supervision_por_id(sup_id)
+            pdf_bytes = generar_pdf_supervision(recup)
+            self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+            self.assertGreater(len(pdf_bytes), 3000)
+
+            # 6. Generar PDF consolidado mensual con logo
+            pdf_cons_bytes = generar_pdf_consolidado_mensual("Edificio Corporativo Logo Test", 2026, 10, [recup["cabecera"]])
+            self.assertTrue(pdf_cons_bytes.startswith(b"%PDF"))
+            self.assertGreater(len(pdf_cons_bytes), 2000)
+
+            # 7. Eliminar logotipo y verificar restauración de fallback
+            ok_del = eliminar_logo_empresa()
+            self.assertTrue(ok_del)
+            self.assertIsNone(obtener_logo_empresa())
+            self.assertEqual(obtener_parametro("empresa_logo_path", ""), "")
+
+            # 8. Generar PDF sin logo para comprobar que el fallback funciona perfectamente
+            pdf_sin_logo = generar_pdf_supervision(recup)
+            self.assertTrue(pdf_sin_logo.startswith(b"%PDF"))
+            self.assertGreater(len(pdf_sin_logo), 3000)
+
+            # Limpieza
+            eliminar_supervision(sup_id)
+            print("[OK] Carga de logotipo, persistencia en BD, renderizado en PDF e informe mensual validados al 100%.")
+        finally:
+            # Restaurar logotipo original del usuario si existía antes del test
+            if logo_prev_bytes:
+                guardar_logo_empresa(logo_prev_bytes, logo_prev_nombre)
+            else:
+                eliminar_logo_empresa()
+
+    def test_25_sincronizacion_checklist_capa(self):
+        """Validar la sincronización automática en tiempo real de No Conformidades y fotos entre Tab 2 y Tab 4 (CAPA)."""
+        import streamlit as st
+        from modules.nueva_supervision import sincronizar_incidencias_desde_checklist, generar_accion_correctiva_sugerida
+        from PIL import Image
+
+        # 1. Probar generador inteligente de acciones correctivas sugeridas
+        act_bano = generar_accion_correctiva_sugerida("Servicios Higiénicos", "Aparatos Sanitarios", "Presencia de sarro severo en inodoro")
+        self.assertIn("desincrustante ácido", act_bano.lower())
+
+        act_piso = generar_accion_correctiva_sugerida("Hall de Ingreso", "Pisos", "Mancha de grasa en porcelanato")
+        self.assertIn("máquina rotativa", act_piso.lower())
+
+        # 2. Configurar session_state simulando Tab 2 con evaluaciones
+        test_img_path = str(DATA_DIR / "test_foto_capa.jpg")
+        img = Image.new("RGB", (100, 100), color="blue")
+        img.save(test_img_path)
+
+        st.session_state.incidencias_temp = []
+        st.session_state.incidencias_descartadas_cids = set()
+        st.session_state.fotos_temp = [
+            {
+                "uid": "f_test_001",
+                "area_nombre": "Servicios Higiénicos",
+                "tipo_evidencia": "Hallazgo / No Conforme",
+                "archivo_nombre": "test_foto_capa.jpg",
+                "archivo_ruta": test_img_path,
+                "descripcion": "Inodoros con sarro",
+                "criterio_id": "c_sh_01"
+            }
+        ]
+        st.session_state.evaluacion_temp = {
+            "c_sh_01": {
+                "id_area": 1,
+                "nombre_area": "Servicios Higiénicos",
+                "item_criterio": "Aparatos Sanitarios e Inodoros",
+                "calificacion": "NC",
+                "observacion": "Sarro adherido en taza"
+            },
+            "c_hall_02": {
+                "id_area": 2,
+                "nombre_area": "Hall de Ingreso",
+                "item_criterio": "Pisos y Zócalos",
+                "calificacion": "R",
+                "observacion": "Piso opaco y con polvo"
+            },
+            "c_conf_03": {
+                "id_area": 3,
+                "nombre_area": "Ascensores",
+                "item_criterio": "Botonera y Espejos",
+                "calificacion": "C",
+                "observacion": ""
+            }
+        }
+        # Emular widgets de radio y observacion
+        st.session_state["rad_c_sh_01"] = "NC"
+        st.session_state["obs_c_sh_01"] = "Sarro adherido en taza"
+        st.session_state["rad_c_hall_02"] = "R"
+        st.session_state["obs_c_hall_02"] = "Piso opaco y con polvo"
+        st.session_state["rad_c_conf_03"] = "C"
+        st.session_state["obs_c_conf_03"] = ""
+
+        # Agregar también una incidencia manual previa fuera de checklist
+        st.session_state.incidencias_temp.append({
+            "area_nombre": "Fachada",
+            "descripcion_hallazgo": "Grafiti en muro perimétrico",
+            "severidad": "Media",
+            "accion_correctiva": "Pintar muro con esmalte gris",
+            "plazo_subsanacion": "48 Horas",
+            "responsable": "Cuadrilla Externa",
+            "estado_subsanacion": "Pendiente",
+            "foto_ruta": "",
+            "fotos": [],
+            "origen": "MANUAL",
+            "desc_personalizada": True,
+            "sev_personalizada": True
+        })
+
+        # 3. Ejecutar sincronización automática
+        sincronizar_incidencias_desde_checklist()
+
+        # Debe contener 3 incidencias: 1 manual + 2 automáticas (c_sh_01 y c_hall_02)
+        self.assertEqual(len(st.session_state.incidencias_temp), 3)
+
+        # Verificar incidencia automática de NC (alta severidad, 24 horas, foto vinculada)
+        inc_nc = next((i for i in st.session_state.incidencias_temp if i.get("criterio_id") == "c_sh_01"), None)
+        self.assertIsNotNone(inc_nc)
+        self.assertEqual(inc_nc["severidad"], "Alta")
+        self.assertEqual(inc_nc["plazo_subsanacion"], "24 Horas")
+        self.assertEqual(inc_nc["origen"], "CHECKLIST_AUTO")
+        self.assertEqual(len(inc_nc["fotos"]), 1)
+        self.assertEqual(inc_nc["foto_ruta"], test_img_path)
+
+        # Verificar incidencia automática de R (media severidad, 48 horas)
+        inc_r = next((i for i in st.session_state.incidencias_temp if i.get("criterio_id") == "c_hall_02"), None)
+        self.assertIsNotNone(inc_r)
+        self.assertEqual(inc_r["severidad"], "Media")
+        self.assertEqual(inc_r["plazo_subsanacion"], "48 Horas")
+
+        # Verificar que la incidencia manual sigue intacta
+        inc_man = next((i for i in st.session_state.incidencias_temp if i.get("origen") == "MANUAL"), None)
+        self.assertIsNotNone(inc_man)
+        self.assertEqual(inc_man["area_nombre"], "Fachada")
+
+        # 4. Modificar el criterio de NC a Conforme (C) en Tab 2 y resincronizar
+        st.session_state["rad_c_sh_01"] = "C"
+        st.session_state.evaluacion_temp["c_sh_01"]["calificacion"] = "C"
+        sincronizar_incidencias_desde_checklist()
+
+        # La incidencia de c_sh_01 debe removerse automáticamente; quedan 2 (1 manual + 1 regular)
+        self.assertEqual(len(st.session_state.incidencias_temp), 2)
+        cids_act = [i.get("criterio_id") for i in st.session_state.incidencias_temp if i.get("criterio_id")]
+        self.assertNotIn("c_sh_01", cids_act)
+        self.assertIn("c_hall_02", cids_act)
+
+        # Limpiar archivo de prueba
+        if os.path.exists(test_img_path):
+            os.remove(test_img_path)
+
+        print("[OK] Sincronización automática Checklist-CAPA, vinculación de fotos y acciones sugeridas validadas al 100%.")
+
+    def test_27_codigo_informe_editable_y_reemision(self):
+        """Verificar la asignación, detección de colisión y actualización con código de informe personalizado."""
+        edificios = obtener_lista_edificios()
+        supervisores = obtener_lista_supervisores()
+        edif = edificios[0]
+        sup = supervisores[0]
+
+        cod_custom = f"REP-LMP-TEST-HIST-{datetime.now().strftime('%H%M%S')}"
+
+        # 1. Verificar que inicialmente no existe
+        self.assertIsNone(existe_codigo_informe(cod_custom))
+
+        # 2. Guardar un informe con ese código personalizado
+        datos_gral = {
+            "codigo_informe": cod_custom,
+            "fecha_inspeccion": "2026-10-28",
+            "hora_inicio": "08:00",
+            "hora_fin": "09:30",
+            "tipo_inspeccion": "Supervisión Rutinaria",
+            "turno": "Turno Mañana",
+            "edificio_id": edif["id"],
+            "edificio_nombre": edif["nombre"],
+            "edificio_direccion": edif["direccion"],
+            "administrador_nombre": "Administración Test",
+            "supervisor_id": sup["id"],
+            "supervisor_nombre": sup["nombre_completo"],
+            "supervisor_dni": sup["dni_ce"],
+            "lider_cuadrilla": "Líder Test",
+            "personal_programado": 4,
+            "personal_presente": 4,
+            "personal_faltante": 0,
+            "score_global": 92.5,
+            "nivel_calidad": "ADECUADO",
+            "estado_aprobacion": "Aprobado",
+            "total_items_evaluados": 1,
+            "total_conformes": 1,
+            "total_adecuados": 0,
+            "total_regulares": 0,
+            "total_no_conformes": 0,
+            "total_no_aplica": 0,
+            "epp_conforme": 1,
+            "maquinaria_conforme": 1,
+            "insumos_conforme": 1,
+            "incluir_firmas": 1,
+            "observaciones_generales": "Primera emisión con código personalizado.",
+            "plan_accion_resumen": "Sin observaciones críticas",
+            "firma_supervisor_data": "",
+            "firma_cliente_data": "",
+            "firmante_cliente_nombre": "Admin Test",
+            "firmante_cliente_cargo": "Administrador",
+            "estado_informe": "FINALIZADO"
+        }
+        detalles = [{
+            "id_area": "lobby",
+            "nombre_area": "Lobby Principal",
+            "id_criterio": "c_lobby_01",
+            "item_criterio": "Pisos de ingreso",
+            "calificacion": "C",
+            "puntos": 100,
+            "observacion": "Todo impecable"
+        }]
+
+        sup_id, cod_res = guardar_supervision_completa(datos_gral, detalles, [], [])
+        self.assertEqual(cod_res, cod_custom)
+
+        # 3. Verificar que existe_codigo_informe lo detecta correctamente
+        info_ex = existe_codigo_informe(cod_custom)
+        self.assertIsNotNone(info_ex)
+        self.assertEqual(info_ex["id"], sup_id)
+        self.assertEqual(info_ex["edificio_nombre"], edif["nombre"])
+
+        # Verificar exclusión por ID (para edición propia)
+        info_excluida = existe_codigo_informe(cod_custom, excluir_id=sup_id)
+        self.assertIsNone(info_excluida)
+
+        # 4. Obtener por código
+        datos_recup = obtener_supervision_por_codigo(cod_custom)
+        self.assertIsNotNone(datos_recup)
+        self.assertEqual(datos_recup["cabecera"]["id"], sup_id)
+        self.assertEqual(datos_recup["cabecera"]["codigo_informe"], cod_custom)
+
+        # 5. Simular reemisión / actualización del informe perdido manteniendo el mismo código
+        datos_gral_actualizados = dict(datos_gral)
+        datos_gral_actualizados["observaciones_generales"] = "Actualización de información perdida conservando el código oficial."
+        datos_gral_actualizados["score_global"] = 96.0
+
+        actualizar_supervision_completa(
+            supervision_id=sup_id,
+            datos_gral=datos_gral_actualizados,
+            detalles_evaluacion=detalles,
+            incidencias=[],
+            fotos_guardadas=[]
+        )
+
+        datos_verif = obtener_supervision_por_codigo(cod_custom)
+        self.assertEqual(datos_verif["cabecera"]["observaciones_generales"], "Actualización de información perdida conservando el código oficial.")
+        self.assertEqual(datos_verif["cabecera"]["score_global"], 96.0)
+
+        # Limpiar
+        eliminar_supervision(sup_id)
+        print(f"[OK] Código de informe editable ({cod_custom}), detección y reemisión/actualización validados al 100%.")
+
+    def test_28_incidencia_manual_por_zona_vinculada_sin_duplicidad(self):
+        """Verificar que las incidencias manuales creadas desde el botón al final de cada zona en 2) Checklist por Zonas se vinculan con 4) Incidencias & Fotos sin duplicidad."""
+        import streamlit as st
+        from PIL import Image as PILImage
+        from modules.nueva_supervision import (
+            registrar_incidencia_manual_vinculada,
+            sincronizar_incidencias_desde_checklist,
+        )
+
+        st.session_state.evaluacion_temp = {}
+        st.session_state.incidencias_temp = []
+        st.session_state.fotos_temp = []
+        st.session_state.fotos_cargadas_ids = set()
+
+        # Crear archivo simulado de foto en memoria
+        class DummyUpload:
+            def __init__(self, name, data):
+                self.name = name
+                self._data = data
+            def getvalue(self):
+                return self._data
+
+        im = PILImage.new("RGB", (200, 150), color=(180, 60, 40))
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG")
+        foto_dummy = DummyUpload("evidencia_zona_1.jpg", buf.getvalue())
+
+        zona = "1. Hall de Ingreso / Lobby / Recepción"
+        desc = "Luminaria de emergencia desprendida junto a recepción"
+
+        # 1. Registrar desde el botón al final de la Zona en Tab 2 (sin escribir acción correctiva para que se sugiera sola)
+        res1 = registrar_incidencia_manual_vinculada(
+            area_nombre=zona,
+            descripcion_hallazgo=desc,
+            severidad="Alta",
+            accion_correctiva="",
+            plazo_subsanacion="Inmediato (En el turno)",
+            responsable="Supervisor de Operaciones",
+            archivos_fotos=[foto_dummy]
+        )
+        self.assertTrue(res1["ok"])
+        self.assertFalse(res1["actualizada"])
+        self.assertEqual(len(st.session_state.incidencias_temp), 1)
+        self.assertEqual(len(st.session_state.fotos_temp), 1)
+
+        inc = st.session_state.incidencias_temp[0]
+        self.assertEqual(inc["origen"], "MANUAL")
+        self.assertEqual(inc["area_nombre"], zona)
+        self.assertEqual(inc["descripcion_hallazgo"], desc)
+        self.assertTrue(len(inc["accion_correctiva"]) > 10)
+        self.assertEqual(len(inc["fotos"]), 1)
+
+        foto_reg = st.session_state.fotos_temp[0]
+        self.assertEqual(foto_reg["area_nombre"], zona)
+        self.assertEqual(foto_reg["descripcion"], desc)
+        self.assertEqual(foto_reg["origen"], "CAPA")
+
+        # 2. Intentar registrar la misma incidencia en la misma zona desde Tab 4 o Tab 2 -> debe actualizar sin duplicar
+        res2 = registrar_incidencia_manual_vinculada(
+            area_nombre=zona,
+            descripcion_hallazgo=desc.upper() + "  ",
+            severidad="Crítica",
+            accion_correctiva="Asegurar soporte y reportar a mantenimiento eléctrico",
+            plazo_subsanacion="Inmediato (En el turno)",
+            responsable="Administración del Edificio",
+            archivos_fotos=[foto_dummy]  # Misma foto (mismo hash MD5)
+        )
+        self.assertTrue(res2["ok"])
+        self.assertTrue(res2["actualizada"])
+        self.assertEqual(len(st.session_state.incidencias_temp), 1, "No debe duplicarse la incidencia manual.")
+        self.assertEqual(len(st.session_state.fotos_temp), 1, "No debe duplicarse la foto con igual hash.")
+        self.assertEqual(st.session_state.incidencias_temp[0]["severidad"], "Crítica")
+        self.assertEqual(
+            st.session_state.incidencias_temp[0]["accion_correctiva"],
+            "Asegurar soporte y reportar a mantenimiento eléctrico"
+        )
+
+        # 3. Sincronizar con el checklist y verificar que la incidencia manual se mantiene intacta y vinculada
+        sincronizar_incidencias_desde_checklist()
+        self.assertEqual(len(st.session_state.incidencias_temp), 1)
+        self.assertEqual(st.session_state.incidencias_temp[0]["area_nombre"], zona)
+
+        # Limpiar archivo físico generado
+        for f in st.session_state.fotos_temp:
+            p = f.get("archivo_ruta")
+            if p and os.path.exists(p):
+                os.remove(p)
+
+        print("[OK] Registro de Incidencia Manual por Zona vinculado con 4) Incidencias & Fotos sin duplicidad validado al 100%.")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

@@ -348,11 +348,11 @@ function setupActions() {
         const adminEl = document.getElementById("cliente-admin");
         const supEl = document.getElementById("supervisor-nombre");
         const dniEl = document.getElementById("supervisor-dni");
-        if (edifEl) edifEl.value = "Centro Empresarial Platinum Tower";
-        if (dirEl) dirEl.value = "Av. Víctor Andrés Belaúnde 147, San Isidro";
-        if (adminEl) adminEl.value = "Ing. Roberto Seminario";
-        if (supEl) supEl.value = "Carlos Mendoza Ramos";
-        if (dniEl) dniEl.value = "43892156";
+        if (edifEl) edifEl.value = "Programa Subsectorial de Irrigaciones (PSI)";
+        if (dirEl) dirEl.value = "Av. Alameda del Corregidor N.° 155, La Molina";
+        if (adminEl) adminEl.value = "N.A.";
+        if (supEl) supEl.value = "José Torres Crisóstomo";
+        if (dniEl) dniEl.value = "73066809";
         if (pwaFotos.length === 0) {
             generarFotoDemoVertical();
         }
@@ -369,8 +369,8 @@ function setupActions() {
         e.preventDefault();
         
         const codigo = `REP-LMP-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-        const edificio = document.getElementById("edificio-nombre")?.value || "Centro Empresarial Platinum Tower";
-        const supervisor = document.getElementById("supervisor-nombre")?.value || "Carlos Mendoza Ramos";
+        const edificio = document.getElementById("edificio-nombre")?.value || "Programa Subsectorial de Irrigaciones (PSI)";
+        const supervisor = document.getElementById("supervisor-nombre")?.value || "José Torres Crisóstomo";
         const fecha = document.getElementById("inspeccion-fecha")?.value || new Date().toISOString().split("T")[0];
         const turno = document.getElementById("inspeccion-turno")?.value || "Turno Mañana";
         const score = document.getElementById("live-score-val")?.innerText || "100%";
@@ -402,11 +402,11 @@ function setupActions() {
     // Exportar JSON para Sistema Central Streamlit
     document.getElementById("btn-exportar-json")?.addEventListener("click", () => {
         const codigo = `REP-PWA-${Date.now().toString().slice(-4)}`;
-        const edificio = document.getElementById("edificio-nombre")?.value || "Centro Empresarial Platinum Tower";
-        const direccion = document.getElementById("edificio-direccion")?.value || "Av. Víctor Andrés Belaúnde 147, San Isidro";
-        const admin = document.getElementById("cliente-admin")?.value || "Ing. Roberto Seminario";
-        const supervisor = document.getElementById("supervisor-nombre")?.value || "Carlos Mendoza Ramos";
-        const dni = document.getElementById("supervisor-dni")?.value || "43892156";
+        const edificio = document.getElementById("edificio-nombre")?.value || "Programa Subsectorial de Irrigaciones (PSI)";
+        const direccion = document.getElementById("edificio-direccion")?.value || "Av. Alameda del Corregidor N.° 155, La Molina";
+        const admin = document.getElementById("cliente-admin")?.value || "N.A.";
+        const supervisor = document.getElementById("supervisor-nombre")?.value || "José Torres Crisóstomo";
+        const dni = document.getElementById("supervisor-dni")?.value || "73066809";
         const tipo = document.getElementById("inspeccion-tipo")?.value || "Supervisión Rutinaria Diaria";
         const fecha = document.getElementById("inspeccion-fecha")?.value || new Date().toISOString().split("T")[0];
         const turno = document.getElementById("inspeccion-turno")?.value || "Turno Mañana (07:00 - 15:00)";

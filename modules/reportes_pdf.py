@@ -20,7 +20,7 @@ from reportlab.platypus import (
 from reportlab.pdfgen import canvas
 
 from config import SYSTEM_TITLE, FORMAT_CODE, FORMAT_VERSION, COMPANY_NAME, clasificar_calidad
-from database import obtener_parametro
+from database import obtener_parametro, obtener_logo_empresa
 
 
 class NumberedCanvas(canvas.Canvas):
@@ -174,14 +174,48 @@ def generar_pdf_supervision(supervision_data: dict) -> bytes:
     <font size=8 color="#64748B">{empresa_subtitulo}</font><br/>
     <font size=7.5 color="#334155">Código de Informe: <b>{cabecera['codigo_informe']}</b> &nbsp;|&nbsp; Formato: {formato_cod} &nbsp;|&nbsp; Versión: {formato_ver}</font>
     """
-    
+
+    # Obtener logotipo corporativo configurado (o override en supervision_data/cabecera)
+    logo_path_override = cabecera.get("logo_empresa_path") or supervision_data.get("logo_empresa_path")
+    logo_info = None
+    if logo_path_override and os.path.exists(logo_path_override):
+        try:
+            with PILImage.open(logo_path_override) as p_img:
+                lw, lh = p_img.size
+            logo_info = {"path": logo_path_override, "ancho": lw, "alto": lh}
+        except Exception:
+            logo_info = None
+
+    if not logo_info:
+        logo_info = obtener_logo_empresa()
+
+    logo_flowable = None
+    if logo_info and logo_info.get("path") and os.path.exists(logo_info["path"]):
+        try:
+            with PILImage.open(logo_info["path"]) as p_img:
+                lw, lh = p_img.size
+                max_w = 1.35 * inch
+                max_h = 0.85 * inch
+                scale_l = min(max_w / lw, max_h / lh)
+                final_lw = max(lw * scale_l, 10)
+                final_lh = max(lh * scale_l, 10)
+            logo_flowable = Image(logo_info["path"], width=final_lw, height=final_lh)
+        except Exception:
+            logo_flowable = None
+
+    if logo_flowable is None:
+        logo_flowable = Paragraph(
+            f"<font size=20 color='#0284C7'>🏢</font><br/><font size=8.5><b>SUPERVISIÓN</b><br/>LIMPIEZA</font>",
+            ParagraphStyle('HIcon', parent=body_bold, alignment=1)
+        )
+
     header_table_data = [
         [
-            Paragraph(f"<font size=20 color='#0284C7'>🏢</font><br/><font size=8.5><b>SUPERVISIÓN</b><br/>LIMPIEZA</font>", ParagraphStyle('HIcon', parent=body_bold, alignment=1)),
+            logo_flowable,
             Paragraph(header_text, subtitle_style)
         ]
     ]
-    header_table = Table(header_table_data, colWidths=[1.3*inch, 6.1*inch])
+    header_table = Table(header_table_data, colWidths=[1.4*inch, 6.0*inch])
     header_table.setStyle(TableStyle([
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('ALIGN', (0,0), (0,0), 'CENTER'),

@@ -22,7 +22,7 @@ from config import (
     SYSTEM_TITLE, SYSTEM_SUBTITLE, FORMAT_CODE, FORMAT_VERSION,
     COMPANY_NAME, NORMATIVE_REFERENCES, STATIC_DIR
 )
-from database import init_db
+from database import init_db, obtener_logo_empresa, obtener_parametro
 from modules.nueva_supervision import render_formulario_nueva_supervision
 from modules.historial import render_historial_supervisiones
 from modules.dashboard import render_dashboard_analitica
@@ -108,8 +108,14 @@ def main():
 
     # 2. Barra lateral de navegación
     with st.sidebar:
+        logo_info = obtener_logo_empresa()
+        if logo_info and logo_info.get("path") and os.path.exists(logo_info["path"]):
+            st.image(logo_info["path"], use_container_width=True)
         st.markdown(f"### 🏢 {SYSTEM_TITLE}")
-        st.caption(f"**{COMPANY_NAME}**\n\nFormato: `{FORMAT_CODE}` | Rev. `{FORMAT_VERSION}`")
+        empresa_actual = obtener_parametro("empresa_nombre", COMPANY_NAME)
+        formato_cod = obtener_parametro("formato_codigo", FORMAT_CODE)
+        formato_ver = obtener_parametro("formato_version", FORMAT_VERSION)
+        st.caption(f"**{empresa_actual}**\n\nFormato: `{formato_cod}` | Rev. `{formato_ver}`")
         st.markdown("---")
 
         # Perfil del usuario autenticado con botón de Cerrar Sesión

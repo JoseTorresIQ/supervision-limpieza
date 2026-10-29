@@ -5,8 +5,15 @@ Manejo de transacciones seguras, histórico de auditorías, maestros editables, 
 import sqlite3
 import json
 import os
+import base64
+import io
 from datetime import datetime
-from config import DATA_DIR, CHECKLIST_AREAS, TIPOS_INSPECCION, TURNOS_TRABAJO, COMPANY_NAME, FORMAT_CODE, FORMAT_VERSION, PUNTAJES
+from pathlib import Path
+from typing import Optional, Dict, Any
+from config import (
+    DATA_DIR, STATIC_DIR, UPLOADS_DIR, CHECKLIST_AREAS, TIPOS_INSPECCION,
+    TURNOS_TRABAJO, COMPANY_NAME, FORMAT_CODE, FORMAT_VERSION, PUNTAJES
+)
 
 DB_PATH = DATA_DIR / "supervision_limpieza.db"
 
@@ -349,6 +356,8 @@ def init_db():
             ("empresa_subtitulo", "Control de Calidad, Estándares de Higiene y Cumplimiento de Servicio", "Subtítulo en encabezado de reportes"),
             ("formato_codigo", FORMAT_CODE, "Código oficial de formato de calidad"),
             ("formato_version", FORMAT_VERSION, "Versión de revisión del formato"),
+            ("empresa_logo_path", "", "Ruta relativa o nombre del archivo de logotipo oficial de la empresa"),
+            ("empresa_logo_base64", "", "Logotipo oficial de la empresa en base64"),
             ("email_smtp_servidor", "smtp.gmail.com", "Servidor SMTP para envío de informes"),
             ("email_smtp_puerto", "587", "Puerto SMTP"),
             ("email_smtp_remitente", "calidad@cleanfacilitypro.pe", "Correo remitente del sistema")
@@ -359,32 +368,27 @@ def init_db():
                 VALUES (?, ?, ?)
             """, (clave, valor, desc))
 
-        # Insertar edificios demo si la tabla está vacía
+        # Insertar edificio inicial (PSI) solo si la tabla está completamente vacía
         cursor.execute("SELECT COUNT(*) FROM edificios")
         if cursor.fetchone()[0] == 0:
-            edificios_demo = [
-                ("Centro Empresarial Platinum Tower", "Av. Víctor Andrés Belaúnde 147, San Isidro", "San Isidro, Lima", "Ing. Roberto Seminario", "+51 987 654 321", 18, 4, 8, "Torre corporativa AAA con altos estándares de cristales y mármol."),
-                ("Edificio Residencial Las Magnolias", "Calle Los Sauces 450, Miraflores", "Miraflores, Lima", "Sra. Carmen Villalobos", "+51 998 112 334", 12, 2, 3, "Condominio residencial con áreas comunes y piscina."),
-                ("Centro Médico & Torre Salud Total", "Av. Javier Prado Este 2450, San Borja", "San Borja, Lima", "Dr. Fernando Morales", "+51 977 445 566", 8, 2, 6, "Exigencia sanitaria hospitalaria estricta."),
-                ("Edificio Corporativo Los Nogales", "Av. Paseo de la República 3200, San Isidro", "San Isidro, Lima", "Lic. Mónica Castro", "+51 944 887 711", 15, 3, 5, "Sede de consultoría y tecnología.")
+            edificios_iniciales = [
+                ("Programa Subsectorial de Irrigaciones (PSI)", "Av. Alameda del Corregidor N.° 155", "La Molina", "N.A.", "", 3, 0, 1, "Oficinas de manera modular, presencia de varias áreas verdes.")
             ]
             cursor.executemany("""
                 INSERT INTO edificios (nombre, direccion, distrito_ciudad, administrador_contacto, telefono_email, num_pisos, num_sotanos, dotacion_personal_asignada, observaciones)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, edificios_demo)
+            """, edificios_iniciales)
 
-        # Insertar supervisores demo si la tabla está vacía
+        # Insertar supervisor inicial solo si la tabla está completamente vacía
         cursor.execute("SELECT COUNT(*) FROM supervisores")
         if cursor.fetchone()[0] == 0:
-            supervisores_demo = [
-                ("Carlos Mendoza Ramos", "43892156", "Supervisor Senior de Calidad y Servicios", "+51 991 223 344"),
-                ("Jessica Alvarado Peña", "47521098", "Supervisora de Operaciones Facility", "+51 982 334 455"),
-                ("Manuel Quispe Torres", "10458792", "Inspector Técnico de Saneamiento y Limpieza", "+51 973 445 566")
+            supervisores_iniciales = [
+                ("José Torres Crisóstomo", "73066809", "Supervisor de Operaciones y Calidad del Servicio", "945207642")
             ]
             cursor.executemany("""
                 INSERT INTO supervisores (nombre_completo, dni_ce, cargo, telefono)
                 VALUES (?, ?, ?, ?)
-            """, supervisores_demo)
+            """, supervisores_iniciales)
 
         # Insertar Tipos de Inspección iniciales
         cursor.execute("SELECT COUNT(*) FROM tipos_inspeccion")
@@ -413,99 +417,27 @@ def init_db():
                         VALUES (?, ?, ?, ?, ?)
                     """, (crit["id"], area["id_area"], crit["item"], crit["descripcion"], idx_c + 1))
 
-        # Insertar Semillas de Cronograma si la tabla está vacía
-        cursor.execute("SELECT COUNT(*) FROM cronograma_supervisiones")
-        if cursor.fetchone()[0] == 0:
-            hoy_str = datetime.now().strftime("%Y-%m-%d")
-            cursor.execute("""
-                INSERT INTO cronograma_supervisiones (edificio_id, edificio_nombre, supervisor_id, supervisor_nombre, fecha_programada, tipo_inspeccion, turno, estado, observaciones)
-                VALUES 
-                (1, 'Centro Empresarial Platinum Tower', 1, 'Carlos Mendoza Ramos', ?, 'Supervisión Rutinaria Diaria', 'Turno Mañana (07:00 - 15:00)', 'Programada', 'Revisión exhaustiva de hall de ingreso y baterías de baños.'),
-                (2, 'Edificio Residencial Las Magnolias', 2, 'Jessica Alvarado Peña', ?, 'Auditoría Mensual de Calidad', 'Turno Tarde (15:00 - 23:00)', 'Programada', 'Auditoría mensual con administración de condominio.'),
-                (3, 'Centro Médico & Torre Salud Total', 3, 'Manuel Quispe Torres', ?, 'Supervisión Inopinada / Nocturna', 'Turno Noche (23:00 - 07:00)', 'Programada', 'Verificación de desinfección de áreas críticas y cuarto de residuos.')
-            """, (hoy_str, hoy_str, hoy_str))
-
-        # Insertar Semillas de Insumos y Químicos si la tabla está vacía
-        cursor.execute("SELECT COUNT(*) FROM control_insumos_stock")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("""
-                INSERT INTO control_insumos_stock (edificio_id, edificio_nombre, producto_nombre, categoria, unidad_medida, stock_actual, stock_minimo, ultimo_movimiento)
-                VALUES
-                (1, 'Centro Empresarial Platinum Tower', 'Detergente Neutro Concentrado', 'Químicos de Limpieza', 'Galones', 14.0, 5.0, datetime('now')),
-                (1, 'Centro Empresarial Platinum Tower', 'Desinfectante Amonio Cuaternario 5ta Gen', 'Desinfectantes', 'Galones', 8.0, 3.0, datetime('now')),
-                (1, 'Centro Empresarial Platinum Tower', 'Limpiavidrios Antiestático', 'Cristales', 'Galones', 6.0, 2.0, datetime('now')),
-                (1, 'Centro Empresarial Platinum Tower', 'Papel Higiénico Jumbo Roll 550m', 'Insumos Sanitarios', 'Rollos', 45.0, 20.0, datetime('now')),
-                (1, 'Centro Empresarial Platinum Tower', 'Bolsas Negras Extra Fuertes 140L', 'Bolsas y Residuos', 'Paquetes (x50)', 12.0, 5.0, datetime('now')),
-                (2, 'Edificio Residencial Las Magnolias', 'Detergente Neutro Especial Mármol', 'Químicos de Limpieza', 'Galones', 4.0, 2.0, datetime('now')),
-                (2, 'Edificio Residencial Las Magnolias', 'Desengrasante de Sótanos / Piscinas', 'Químicos Especiales', 'Galones', 2.0, 3.0, datetime('now'))
-            """)
-
-        # Insertar Semillas de Maquinarias y Equipos si la tabla está vacía
-        cursor.execute("SELECT COUNT(*) FROM maquinarias_equipos")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("""
-                INSERT INTO maquinarias_equipos (codigo_equipo, tipo_maquinaria, marca_modelo, serie, edificio_id, edificio_nombre, estado_operativo, fecha_adquisicion, ultimo_mantenimiento, proximo_mantenimiento, observaciones)
-                VALUES
-                ('LUST-01', 'Lustradora Rotativa de 17"', 'Viper Fang 17HD', 'VP-2024-8841', 1, 'Centro Empresarial Platinum Tower', 'Operativo', '2024-03-15', '2026-09-10', '2026-11-10', 'Motor 1.5 HP con disco pad 3M rojo y blanco.'),
-                ('ASP-01', 'Aspiradora Industrial Seco/Líquido', 'Kärcher NT 70/2', 'KC-2023-4122', 1, 'Centro Empresarial Platinum Tower', 'Operativo', '2023-08-20', '2026-08-15', '2026-11-15', 'Capacidad 70 litros, doble motor.'),
-                ('HIDRO-01', 'Hidrolavadora de Alta Presión', 'Stihl RE 143 Plus', 'ST-2024-9910', 2, 'Edificio Residencial Las Magnolias', 'Operativo', '2024-01-10', '2026-09-01', '2026-12-01', 'Uso en lavado de sótanos y veredas.'),
-                ('LUST-02', 'Lustradora de Bajas Revoluciones', 'Clarke FM40', 'CK-2022-1104', 3, 'Centro Médico & Torre Salud Total', 'En Mantenimiento', '2022-11-05', '2026-07-20', '2026-10-15', 'Cambio de fajas y carbones de motor programado.')
-            """)
-
-        # Insertar usuarios iniciales si la tabla está vacía
+        # Insertar usuario administrador inicial únicamente si la tabla de usuarios está vacía
         cursor.execute("SELECT COUNT(*) FROM usuarios")
         if cursor.fetchone()[0] == 0:
             ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            usuarios_demo = [
+            usuarios_iniciales = [
                 (
                     "admin",
                     hash_password("admin123"),
-                    "Ing. Carlos Mendoza (Jefe de Operaciones)",
+                    "Ing. José Torres (Supervisor de Operaciones y Calidad)",
                     "👔 Administrador / Jefe de Operaciones",
-                    "Jefe General de Operaciones y Calidad",
+                    "Supervisor de Operaciones y Calidad del Servicio",
                     "admin@cleanfacilitypro.pe",
                     "Todos",
-                    1,
-                    ahora_str
-                ),
-                (
-                    "supervisor",
-                    hash_password("super123"),
-                    "Jessica Alvarado Peña",
-                    "👷 Supervisor de Campo",
-                    "Supervisora Senior de Calidad y Servicios",
-                    "jessica.alvarado@cleanfacilitypro.pe",
-                    "Todos",
-                    1,
-                    ahora_str
-                ),
-                (
-                    "supervisor2",
-                    hash_password("super123"),
-                    "Manuel Quispe Torres",
-                    "👷 Supervisor de Campo",
-                    "Inspector Técnico de Saneamiento y Limpieza",
-                    "manuel.quispe@cleanfacilitypro.pe",
-                    "Todos",
-                    1,
-                    ahora_str
-                ),
-                (
-                    "cliente",
-                    hash_password("cliente123"),
-                    "Ing. Roberto Seminario",
-                    "🏢 Cliente / Administrador Edificio",
-                    "Administrador de Centro Empresarial Platinum Tower",
-                    "roberto.seminario@platinumtower.pe",
-                    "Centro Empresarial Platinum Tower",
                     1,
                     ahora_str
                 )
             ]
             cursor.executemany("""
-                INSERT INTO usuarios (username, password_hash, nombre_completo, rol, cargo, email, edificio_asignado, activo, creado_en)
+                INSERT OR IGNORE INTO usuarios (username, password_hash, nombre_completo, rol, cargo, email, edificio_asignado, activo, creado_en)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, usuarios_demo)
+            """, usuarios_iniciales)
 
         conn.commit()
 
@@ -541,6 +473,139 @@ def obtener_todos_parametros() -> dict:
         cursor = conn.cursor()
         cursor.execute("SELECT clave, valor FROM parametros_sistema")
         return {r["clave"]: r["valor"] for r in cursor.fetchall()}
+
+
+def guardar_logo_empresa(file_bytes: bytes, filename: str = "logo_empresa.png") -> str:
+    """
+    Procesa, optimiza y guarda el logotipo corporativo de la empresa.
+    Guarda el archivo en el directorio de uploads y registra su ruta y base64 en la base de datos.
+    Retorna la ruta absoluta del archivo guardado.
+    """
+    from PIL import Image as PILImage, ImageOps
+
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+
+    img = PILImage.open(io.BytesIO(file_bytes))
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+
+    # Adecuar modos de color no soportados directamente al guardar en PNG
+    if img.mode in ("CMYK", "YCbCr"):
+        img = img.convert("RGB")
+    elif img.mode in ("P", "1"):
+        img = img.convert("RGBA")
+
+    # Si la imagen es excesivamente grande, redimensionar manteniendo proporción (máx 1200x600)
+    max_dims = (1200, 600)
+    img.thumbnail(max_dims, PILImage.Resampling.LANCZOS)
+
+    # Guardar en UPLOADS_DIR como PNG para conservar transparencia y nitidez
+    destino_path = UPLOADS_DIR / "logo_empresa.png"
+    img.save(destino_path, format="PNG", optimize=True)
+
+    # Convertir a base64
+    with open(destino_path, "rb") as f_out:
+        saved_bytes = f_out.read()
+    b64_str = f"data:image/png;base64,{base64.b64encode(saved_bytes).decode('utf-8')}"
+
+    # Guardar en parámetros del sistema
+    ruta_relativa = f"static/uploads/{destino_path.name}"
+    guardar_parametro("empresa_logo_path", ruta_relativa, "Ruta relativa del logotipo oficial de la empresa")
+    guardar_parametro("empresa_logo_base64", b64_str, "Logotipo oficial de la empresa en base64")
+
+    return str(destino_path)
+
+
+def obtener_logo_empresa() -> Optional[Dict[str, Any]]:
+    """
+    Obtiene la información y ruta del logotipo corporativo actual si existe.
+    Retorna dict con 'path', 'bytes', 'base64', 'ancho', 'alto' o None si no hay logo.
+    """
+    from PIL import Image as PILImage
+
+    logo_path = None
+    # 1. Buscar en parámetro empresa_logo_path
+    path_param = obtener_parametro("empresa_logo_path", "")
+    if path_param:
+        p_obj = Path(path_param) if isinstance(path_param, str) else path_param
+        if os.path.isabs(str(p_obj)) and os.path.exists(str(p_obj)):
+            logo_path = str(p_obj)
+        elif (STATIC_DIR.parent / path_param).exists():
+            logo_path = str(STATIC_DIR.parent / path_param)
+        elif (UPLOADS_DIR / os.path.basename(path_param)).exists():
+            logo_path = str(UPLOADS_DIR / os.path.basename(path_param))
+
+    # 2. Si no se encontró por parámetro, verificar archivo físico predeterminado
+    if not logo_path:
+        for ext in [".png", ".jpg", ".jpeg", ".webp"]:
+            candidato = UPLOADS_DIR / f"logo_empresa{ext}"
+            if candidato.exists() and candidato.stat().st_size > 0:
+                logo_path = str(candidato)
+                break
+
+    # Si encontramos el archivo en disco
+    if logo_path and os.path.exists(logo_path):
+        try:
+            with open(logo_path, "rb") as f:
+                b = f.read()
+            if b:
+                with PILImage.open(io.BytesIO(b)) as p_img:
+                    w, h = p_img.size
+                b64 = f"data:image/png;base64,{base64.b64encode(b).decode('utf-8')}"
+                return {
+                    "path": logo_path,
+                    "bytes": b,
+                    "base64": b64,
+                    "ancho": w,
+                    "alto": h
+                }
+        except Exception:
+            pass
+
+    # 3. Si no está en disco pero está en base64 en la base de datos (ej: tras restaurar o migrar)
+    b64_param = obtener_parametro("empresa_logo_base64", "")
+    if b64_param:
+        try:
+            raw_b64 = b64_param.split(",")[-1]
+            b = base64.b64decode(raw_b64)
+            if b:
+                destino = UPLOADS_DIR / "logo_empresa.png"
+                os.makedirs(UPLOADS_DIR, exist_ok=True)
+                with open(destino, "wb") as f_out:
+                    f_out.write(b)
+                with PILImage.open(io.BytesIO(b)) as p_img:
+                    w, h = p_img.size
+                return {
+                    "path": str(destino),
+                    "bytes": b,
+                    "base64": b64_param,
+                    "ancho": w,
+                    "alto": h
+                }
+        except Exception:
+            pass
+
+    return None
+
+
+def eliminar_logo_empresa() -> bool:
+    """
+    Elimina el logotipo corporativo configurado y restaura el estado predeterminado.
+    """
+    guardar_parametro("empresa_logo_path", "", "Ruta del logotipo oficial de la empresa")
+    guardar_parametro("empresa_logo_base64", "", "Logotipo oficial de la empresa en base64")
+
+    for ext in [".png", ".jpg", ".jpeg", ".webp"]:
+        p = UPLOADS_DIR / f"logo_empresa{ext}"
+        if p.exists():
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+    return True
 
 
 # =====================================================================
@@ -1103,6 +1168,7 @@ def actualizar_supervision_completa(supervision_id: int, datos_gral: dict, detal
         # 1. Actualizar Cabecera
         cursor.execute("""
             UPDATE supervisiones SET
+                codigo_informe = COALESCE(?, codigo_informe),
                 fecha_inspeccion = ?, hora_inicio = ?, hora_fin = ?, tipo_inspeccion = ?, turno = ?,
                 edificio_id = ?, edificio_nombre = ?, edificio_direccion = ?, administrador_nombre = ?,
                 supervisor_id = ?, supervisor_nombre = ?, supervisor_dni = ?, lider_cuadrilla = ?,
@@ -1115,6 +1181,7 @@ def actualizar_supervision_completa(supervision_id: int, datos_gral: dict, detal
                 estado_informe = ?
             WHERE id = ?
         """, (
+            datos_gral.get("codigo_informe"),
             datos_gral["fecha_inspeccion"],
             datos_gral.get("hora_inicio", ""),
             datos_gral.get("hora_fin", ""),
@@ -1357,6 +1424,44 @@ def obtener_supervision_por_id(supervision_id: int):
             "fotos": fotos_principales,
             "todas_las_fotos": todas_fotos_db
         }
+
+
+def obtener_supervision_por_codigo(codigo_informe: str) -> Optional[Dict[str, Any]]:
+    """Obtiene toda la información de una supervisión buscando por su código de informe."""
+    if not codigo_informe or not str(codigo_informe).strip():
+        return None
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM supervisiones WHERE codigo_informe = ?", (str(codigo_informe).strip(),))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return obtener_supervision_por_id(row["id"])
+
+
+def existe_codigo_informe(codigo_informe: str, excluir_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """
+    Verifica si un código de informe ya existe en la base de datos.
+    Retorna los datos de cabecera si existe o None si está disponible.
+    """
+    if not codigo_informe or not str(codigo_informe).strip():
+        return None
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if excluir_id:
+            cursor.execute("""
+                SELECT id, codigo_informe, edificio_nombre, fecha_inspeccion, estado_informe, score_global, nivel_calidad
+                FROM supervisiones
+                WHERE codigo_informe = ? AND id != ?
+            """, (str(codigo_informe).strip(), excluir_id))
+        else:
+            cursor.execute("""
+                SELECT id, codigo_informe, edificio_nombre, fecha_inspeccion, estado_informe, score_global, nivel_calidad
+                FROM supervisiones
+                WHERE codigo_informe = ?
+            """, (str(codigo_informe).strip(),))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
 
 def eliminar_supervision(supervision_id: int):

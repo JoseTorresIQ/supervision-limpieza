@@ -17,6 +17,7 @@ from config import DATA_DIR, UPLOADS_DIR
 from database import (
     DB_PATH,
     obtener_parametro, guardar_parametro,
+    guardar_logo_empresa, obtener_logo_empresa, eliminar_logo_empresa,
     obtener_lista_edificios, agregar_edificio, actualizar_edificio, eliminar_edificio_db,
     obtener_lista_supervisores, agregar_supervisor, actualizar_supervisor, eliminar_supervisor_db,
     obtener_tipos_inspeccion, agregar_tipo_inspeccion, actualizar_tipo_inspeccion, eliminar_tipo_inspeccion,
@@ -45,7 +46,7 @@ def render_modulo_configuracion():
     """, unsafe_allow_html=True)
 
     tab_emp, tab_edif, tab_sup, tab_tipos, tab_turnos, tab_areas, tab_users, tab_backup, tab_smtp = st.tabs([
-        "🏢 Empresa & Membrete",
+        "🏢 Empresa, Logo & Membrete",
         "🏢 Edificios & Sedes",
         "👷 Supervisores",
         "📋 Tipos de Inspección",
@@ -57,36 +58,141 @@ def render_modulo_configuracion():
     ])
 
     # -------------------------------------------------------------
-    # TAB 0: DATOS DE LA EMPRESA Y MEMBRETE (EDITABLE)
+    # TAB 0: DATOS DE LA EMPRESA, LOGOTIPO Y MEMBRETE (EDITABLE)
     # -------------------------------------------------------------
     with tab_emp:
-        st.markdown("### 🏢 Datos de la Empresa y Membrete Oficial del Reporte")
-        st.caption("Esta información se estampa automáticamente en el encabezado y pie de página de los reportes PDF generados.")
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%); padding: 18px 24px; border-radius: 12px; margin-bottom: 20px; border-left: 5px solid #0284C7; color: white;">
+            <h3 style="margin: 0; color: #FFFFFF; font-size: 1.25rem; font-weight: 700;">🏢 Identidad Corporativa, Logotipo y Membrete Oficial</h3>
+            <p style="margin: 6px 0 0 0; color: #94A3B8; font-size: 0.9rem;">
+                Administre los datos de la empresa y <b>cargue el logotipo oficial</b> que se estampará en el encabezado de los informes de supervisión en formato PDF.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
         emp_actual = obtener_parametro("empresa_nombre", "SERVICIOS INTEGRALES DE LIMPIEZA Y FACILITY MANAGEMENT S.A.C.")
         sub_actual = obtener_parametro("empresa_subtitulo", "Control de Calidad, Estándares de Higiene y Cumplimiento de Servicio")
         cod_actual = obtener_parametro("formato_codigo", "FOR-SGI-LMP-04")
         ver_actual = obtener_parametro("formato_version", "2.4 - 2026")
+        logo_actual = obtener_logo_empresa()
 
-        with st.form("form_datos_empresa"):
-            c_emp1, c_emp2 = st.columns(2)
-            with c_emp1:
+        col_textos, col_logo = st.columns([1.1, 0.9], gap="large")
+
+        # 1. TEXTOS Y DATOS DE LA EMPRESA
+        with col_textos:
+            st.markdown("#### 📝 Textos del Membrete y Códigos Oficiales")
+            st.caption("Estos textos se imprimen en el encabezado y pie de página de los reportes PDF.")
+            with st.form("form_datos_empresa"):
                 nuevo_emp_nom = st.text_input("Razón Social o Nombre de la Empresa *:", value=emp_actual, key="cfg_emp_nom")
                 nuevo_emp_sub = st.text_input("Subtítulo Institucional:", value=sub_actual, key="cfg_emp_sub")
-            with c_emp2:
-                nuevo_form_cod = st.text_input("Código Oficial del Formato:", value=cod_actual, key="cfg_form_cod")
-                nuevo_form_ver = st.text_input("Versión de Revisión:", value=ver_actual, key="cfg_form_ver")
+                
+                c_c1, c_c2 = st.columns(2)
+                with c_c1:
+                    nuevo_form_cod = st.text_input("Código Oficial del Formato:", value=cod_actual, key="cfg_form_cod")
+                with c_c2:
+                    nuevo_form_ver = st.text_input("Versión de Revisión:", value=ver_actual, key="cfg_form_ver")
 
-            if st.form_submit_button("💾 Guardar Datos de Empresa", type="primary"):
-                if nuevo_emp_nom.strip():
-                    guardar_parametro("empresa_nombre", nuevo_emp_nom.strip())
-                    guardar_parametro("empresa_subtitulo", nuevo_emp_sub.strip())
-                    guardar_parametro("formato_codigo", nuevo_form_cod.strip())
-                    guardar_parametro("formato_version", nuevo_form_ver.strip())
-                    st.success("✅ Datos de la empresa y membrete actualizados exitosamente.")
+                if st.form_submit_button("💾 Guardar Textos de Empresa", type="primary", use_container_width=True):
+                    if nuevo_emp_nom.strip():
+                        guardar_parametro("empresa_nombre", nuevo_emp_nom.strip())
+                        guardar_parametro("empresa_subtitulo", nuevo_emp_sub.strip())
+                        guardar_parametro("formato_codigo", nuevo_form_cod.strip())
+                        guardar_parametro("formato_version", nuevo_form_ver.strip())
+                        st.success("✅ Datos de la empresa actualizados exitosamente.")
+                        st.rerun()
+                    else:
+                        st.error("Ingrese el nombre de la empresa.")
+
+        # 2. SECCIÓN DE LOGOTIPO CORPORATIVO
+        with col_logo:
+            st.markdown("#### 🖼️ Logotipo Corporativo (Uso en Reporte PDF)")
+            st.caption("Cargue la imagen del logotipo de su empresa para personalizar los informes PDF emitidos.")
+
+            # Estado actual del logo
+            if logo_actual and logo_actual.get("path") and os.path.exists(logo_actual["path"]):
+                st.markdown("""
+                <div style="background: #F0FDF4; border: 1px solid #86EFAC; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.1rem;">🟢</span>
+                    <span style="font-weight: 600; color: #166534; font-size: 0.88rem;">Logotipo Oficial Activo en Reportes PDF</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.image(
+                    logo_actual["path"],
+                    caption=f"Logo activo ({logo_actual.get('ancho', '-')} x {logo_actual.get('alto', '-')} px)",
+                    width=230
+                )
+
+                if st.button("🗑️ Eliminar Logotipo (Volver al Estándar)", type="secondary", use_container_width=True, key="btn_del_logo"):
+                    eliminar_logo_empresa()
+                    st.success("Logotipo eliminado. Se restableció el isotipo estándar en los reportes.")
                     st.rerun()
-                else:
-                    st.error("Ingrese el nombre de la empresa.")
+            else:
+                st.markdown("""
+                <div style="background: #F8FAFC; border: 1px dashed #94A3B8; border-radius: 8px; padding: 14px; text-align: center; margin-bottom: 12px;">
+                    <div style="font-size: 1.8rem; margin-bottom: 4px;">🏢</div>
+                    <div style="font-weight: 600; color: #334155; font-size: 0.9rem;">Sin logotipo personalizado cargado</div>
+                    <div style="font-size: 0.8rem; color: #64748B;">Actualmente se estampa el isotipo estándar de Supervisión en los PDF.</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("##### 📤 Cargar Nueva Imagen de Logotipo:")
+            nuevo_archivo_logo = st.file_uploader(
+                "Seleccionar archivo de imagen:",
+                type=["png", "jpg", "jpeg", "webp"],
+                key="uploader_logo_empresa",
+                help="Formatos recomendados: PNG con fondo transparente o JPG. Resolución recomendada: 400x200 px o superior."
+            )
+
+            if nuevo_archivo_logo is not None:
+                st.image(nuevo_archivo_logo, caption="Vista previa de la imagen cargada", width=200)
+                if st.button("💾 Guardar y Aplicar Logotipo", type="primary", use_container_width=True, key="btn_save_logo"):
+                    try:
+                        file_bytes = nuevo_archivo_logo.getvalue()
+                        guardar_logo_empresa(file_bytes, nuevo_archivo_logo.name)
+                        st.success("🎉 ¡Logotipo guardado exitosamente! Ahora se incluirá en todos los reportes PDF.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al procesar la imagen: {e}")
+
+            with st.expander("ℹ️ Consejos para el mejor resultado en PDF"):
+                st.markdown("""
+                - **Fondo Transparente:** Se recomienda utilizar formato **PNG con fondo transparente** para una integración limpia en el membrete.
+                - **Proporción:** Logotipos rectangulares horizontales (relación 2:1 o 3:1) o cuadrados se adaptan automáticamente sin distorsión.
+                - **Resolución:** Tamaño sugerido de **300 px de ancho en adelante**. El sistema redimensiona y optimiza la imagen automáticamente para impresión nítida de alta resolución (300 DPI) sin aumentar el peso del archivo PDF.
+                """)
+
+        # 3. VISTA PREVIA VISUAL DEL MEMBRETE EN EL PDF
+        st.markdown("---")
+        st.markdown("### 👁️ Vista Previa del Encabezado Oficial del Informe PDF")
+        st.caption("Así se visualizará el membrete en la primera página de todos los reportes de supervisión generados:")
+
+        # Construir visual preview HTML
+        if logo_actual and logo_actual.get("base64"):
+            b64_src = logo_actual["base64"] if logo_actual["base64"].startswith("data:") else f"data:image/png;base64,{logo_actual['base64']}"
+            logo_preview_html = f'<img src="{b64_src}" style="max-height: 55px; max-width: 110px; object-fit: contain;" />'
+        elif logo_actual and logo_actual.get("path") and os.path.exists(logo_actual["path"]):
+            logo_preview_html = f'<img src="data:image/png;base64,{logo_actual.get("base64", "")}" style="max-height: 55px; max-width: 110px; object-fit: contain;" />'
+        else:
+            logo_preview_html = '<div style="font-size: 26px; line-height: 1.1;">🏢<br/><span style="font-size: 9px; font-weight: 700; color: #0284C7;">SUPERVISIÓN</span></div>'
+
+        st.markdown(f"""
+        <div style="background: #F8FAFC; border: 1.5px solid #0284C7; border-radius: 8px; padding: 12px 18px; margin-top: 8px; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.08);">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                <div style="flex: 0 0 120px; text-align: center; border-right: 1px solid #CBD5E1; padding-right: 12px;">
+                    {logo_preview_html}
+                </div>
+                <div style="flex: 1; text-align: center;">
+                    <div style="font-size: 0.95rem; font-weight: 800; color: #0F172A; text-transform: uppercase;">{emp_actual}</div>
+                    <div style="font-size: 1.15rem; font-weight: 800; color: #0284C7; margin: 2px 0;">REPORTE DE SUPERVISIÓN DE LIMPIEZA</div>
+                    <div style="font-size: 0.8rem; color: #64748B; font-weight: 500;">{sub_actual}</div>
+                    <div style="font-size: 0.75rem; color: #334155; margin-top: 4px;">
+                        Código de Informe: <b>REP-LMP-2026-XXXX</b> &nbsp;|&nbsp; Formato: <b>{cod_actual}</b> &nbsp;|&nbsp; Versión: <b>{ver_actual}</b>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # -------------------------------------------------------------
     # TAB 1: GESTIÓN DE EDIFICIOS (AGREGAR / EDITAR / ELIMINAR)

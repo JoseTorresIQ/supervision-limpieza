@@ -9,19 +9,20 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 
+from PIL import Image as PILImage
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, HRFlowable
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether, HRFlowable
 )
 from reportlab.pdfgen import canvas
 
 from config import COMPANY_NAME, FORMAT_CODE, FORMAT_VERSION, clasificar_calidad
 from database import (
     obtener_supervisiones_mes, obtener_lista_edificios, obtener_parametro,
-    obtener_todas_incidencias
+    obtener_todas_incidencias, obtener_logo_empresa
 )
 from modules.reportes_pdf import NumberedCanvas
 
@@ -100,9 +101,31 @@ def generar_pdf_consolidado_mensual(edificio_nombre: str, anio: int, mes: int, s
     story = []
 
     # 1. ENCABEZADO FORMAL
+    logo_info = obtener_logo_empresa()
+    logo_flowable = None
+    if logo_info and logo_info.get("path") and os.path.exists(logo_info["path"]):
+        try:
+            with PILImage.open(logo_info["path"]) as p_img:
+                lw, lh = p_img.size
+                scale_l = min((2.0 * inch) / lw, (0.45 * inch) / lh)
+                final_lw = max(lw * scale_l, 10)
+                final_lh = max(lh * scale_l, 10)
+            logo_flowable = Image(logo_info["path"], width=final_lw, height=final_lh)
+        except Exception:
+            logo_flowable = None
+
+    if logo_flowable:
+        col0_content = [
+            logo_flowable,
+            Spacer(1, 2),
+            Paragraph(f"<b><font size=7 color='#0284C7'>{empresa_nombre.upper()}</font></b>", ParagraphStyle('H1_Sub', parent=body_bold, alignment=1))
+        ]
+    else:
+        col0_content = Paragraph(f"<b>🏢 {empresa_nombre.upper()}</b>", ParagraphStyle('H1', parent=body_bold, fontSize=9.5, textColor=colors.HexColor("#0284C7")))
+
     header_data = [
         [
-            Paragraph(f"<b>🏢 {empresa_nombre.upper()}</b>", ParagraphStyle('H1', parent=body_bold, fontSize=9.5, textColor=colors.HexColor("#0284C7"))),
+            col0_content,
             Paragraph("<b>INFORME CONSOLIDADO MENSUAL DE CALIDAD</b><br/><font size=7 color='#64748B'>SERVICIOS DE LIMPIEZA Y FACILITY MANAGEMENT</font>", title_style),
             Paragraph(f"<b>CÓDIGO:</b> {formato_cod}-MES<br/><b>VERSIÓN:</b> {formato_ver}<br/><b>PERIODO:</b> {periodo_str}", ParagraphStyle('H3', parent=body_style, fontSize=7.5, alignment=2))
         ]
